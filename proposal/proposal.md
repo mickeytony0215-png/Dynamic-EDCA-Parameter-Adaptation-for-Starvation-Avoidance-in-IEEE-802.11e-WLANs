@@ -1,4 +1,4 @@
-# Dynamic EDCA Parameter Adaptation for Starvation Avoidance in IEEE 802.11e WLANs
+# Dynamic EDCA Parameter Adaptation for Starvation Avoidance in IEEE 802.11 WLANs
 
 ## Team Members
 
@@ -9,35 +9,48 @@
 
 ---
 
-## 1. Introduction
+## 1. Background
 
-The IEEE 802.11e amendment introduces the Enhanced Distributed Channel Access (EDCA) mechanism to provide Quality of Service (QoS) differentiation in Wireless Local Area Networks (WLANs). EDCA defines four Access Categories (ACs)---Voice (AC_VO), Video (AC_VI), Best Effort (AC_BE), and Background (AC_BK)---each configured with distinct channel access parameters: Arbitration Inter-Frame Space Number (AIFSN), Contention Window minimum and maximum (CWmin, CWmax), and Transmission Opportunity limit (TXOP limit). Higher-priority ACs are assigned more aggressive parameters (smaller CWmin, shorter AIFS, longer TXOP), enabling them to gain channel access more frequently and for longer durations.
+### 1.1 EDCA Mechanism and QoS Differentiation
 
-While this differentiation successfully prioritizes delay-sensitive traffic such as voice and video, it introduces a fundamental fairness problem. Under heavy network load, high-priority traffic monopolizes channel access, leaving lower-priority traffic (BE and BK) with severely degraded throughput---or in extreme cases, complete starvation. The standard EDCA mechanism employs static, pre-configured parameters that remain fixed regardless of actual network conditions. This rigidity means that once a starvation condition develops, the standard protocol provides no adaptive mechanism to alleviate it.
+The Enhanced Distributed Channel Access (EDCA) mechanism in IEEE 802.11 provides Quality of Service (QoS) differentiation for WLANs. EDCA classifies traffic into four Access Categories (ACs) — Voice (AC_VO), Video (AC_VI), Best Effort (AC_BE), and Background (AC_BK) — each configured with distinct channel access parameters: Arbitration Inter-Frame Space Number (AIFSN), Contention Window (CWmin/CWmax), and Transmission Opportunity limit (TXOP limit) [1].
 
-The starvation problem is not merely a theoretical concern. In real-world deployments, WLANs simultaneously carry a mix of traffic types: video conferencing, web browsing, email, and background synchronization. When voice and video traffic consume a disproportionate share of channel resources, even basic web browsing (AC_BE) can become unusable. This degradation violates user expectations and undermines the utility of the network for non-real-time applications.
+However, recent research continues to expose fundamental flaws in EDCA's static parameter configuration. Ugwu et al. [2] systematically analyzed the effect of service differentiation on QoS in EDCA through MATLAB simulation, confirming that high-priority traffic severely starves low-priority traffic under saturation, and that AIFSN has significantly more influence on QoS than CW. Lee et al. [3] observed that the priority mechanism in IEEE 802.11ac EDCA causes severe starvation for low-priority traffic, proposing a Starvation-avoidance Dynamic Multichannel Access (SDMA) method.
 
-In this project, we propose **Queue-Aware Dynamic EDCA (QAD-EDCA)**, an adaptive algorithm that monitors per-AC queue occupancy and packet loss at the Access Point (AP) and dynamically adjusts EDCA parameters to provide minimum bandwidth guarantees for low-priority traffic while preserving the QoS requirements of high-priority flows. We evaluate our approach through extensive simulations using OMNeT++ with the INET Framework, comparing against standard EDCA and existing dynamic adaptation schemes from the literature.
+### 1.2 EDCA Evolution from Wi-Fi 6 to Wi-Fi 7
+
+With the introduction of IEEE 802.11ax (Wi-Fi 6), EDCA was extended to multi-user scenarios (MU-EDCA), introducing Trigger Frames and Target Wake Time (TWT) [10]. Tuan et al. [4] addressed the Overlapping BSS (OBSS) problem in 802.11ax environments by reducing interfering AP transmission power and extending TXOP limits for low-QoS stations, achieving a 21.4% reduction in average downlink transmission delay for interfered stations.
+
+IEEE 802.11be (Wi-Fi 7) further introduces Multi-Link Operation (MLO), bringing new challenges for cross-link traffic management with EDCA. Recent research [5] shows that static EDCA parameters in MLO environments cannot guarantee strict delay bounds, proposing a Genetic Algorithm-based MLO EDCA QoS optimization scheme.
+
+### 1.3 Machine Learning-Driven EDCA Optimization
+
+Deep Reinforcement Learning (DRL) has been extensively applied to dynamic EDCA parameter adjustment in recent years. Zuo et al. [6] proposed PDCF-DRL, integrating DRL into the EDCA contention window backoff mechanism, achieving normalized throughput above 76% and collision rates below 18% across 20–120 station scenarios, significantly outperforming traditional EDCA (throughput 13%–67%, collision rates 29%–85%). Du et al. [7] combined Federated Learning (FL) with Deep Deterministic Policy Gradient (DDPG) for intelligent channel access in dense Wi-Fi deployments, reducing MAC delay by 7.96%–25.24% in static scenarios. Li et al. [8] proposed ReinWiFi, a reinforcement learning-based framework that significantly outperforms EDCA in commercial environments with unknown interference.
+
+Despite their impressive performance, DRL methods are limited by high computational complexity and training convergence time, restricting real-time deployment on resource-constrained devices. This project explores a lightweight, rule-based adaptive scheme that achieves effective starvation avoidance at lower computational cost.
 
 ---
 
 ## 2. Problem Definition
 
-### 2.1 Starvation Condition
+### 2.1 Formal Definition of Starvation Condition
 
-We formally define the starvation condition for a low-priority Access Category $AC_i$ (where $i \in \{BE, BK\}$) as follows:
+We formally define the starvation condition for a low-priority Access Category $AC_i$ (where $i \in \{BE, BK\}$) as:
 
 $$
-\text{Starvation}(AC_i) \iff \left( Q_i > Q_{th} \right) \lor \left( P_{loss,i} > P_{th} \right)
+\text{Starvation}(AC_i) \iff \left( \frac{Q_i}{Q_{cap}} > Q_{th} \right) \lor \left( P_{loss,i} > P_{th} \right)
 $$
 
-where $Q_i$ denotes the current queue length of $AC_i$, $Q_{th}$ is the queue length threshold, $P_{loss,i}$ is the packet loss rate of $AC_i$, and $P_{th}$ is the packet loss rate threshold.
-
-Starvation occurs when high-priority ACs (AC_VO, AC_VI) dominate channel access to the extent that low-priority ACs cannot successfully transmit frames within acceptable time bounds. The queues of low-priority ACs overflow, leading to packet drops and unbounded delays.
+where:
+- $Q_i$: current queue length of $AC_i$
+- $Q_{cap}$: queue capacity
+- $Q_{th}$: queue occupancy threshold (default 80%)
+- $P_{loss,i}$: packet loss rate of $AC_i$ during the monitoring interval
+- $P_{th}$: packet loss rate threshold (default 10%)
 
 ### 2.2 Limitations of Static EDCA
 
-The standard EDCA assigns fixed parameters based on the 802.11e specification:
+Standard EDCA assigns fixed parameters per IEEE 802.11-2020 [1]:
 
 | AC | CWmin | CWmax | AIFSN | TXOP limit |
 |----|-------|-------|-------|------------|
@@ -46,7 +59,18 @@ The standard EDCA assigns fixed parameters based on the 802.11e specification:
 | AC_BE | $aCWmin$ | $aCWmax$ | 3 | 0 |
 | AC_BK | $aCWmin$ | $aCWmax$ | 7 | 0 |
 
-These parameters are determined at association time and remain constant throughout the session. The protocol lacks any feedback mechanism to detect when low-priority traffic is being starved or to adaptively reallocate channel access opportunities. As the proportion of high-priority stations increases, the fixed parameter gap between ACs leads to increasingly severe unfairness.
+As verified by Ugwu et al. [2], these static parameters cause drastic increases in packet loss for low-priority traffic under saturation load.
+
+### 2.3 Limitations of Existing Approaches
+
+| Approach | Representative Work | Key Limitations |
+|----------|-------------------|-----------------|
+| Dynamic multichannel access | Lee et al. [3] | Relies on 802.11ac channel bonding; not directly applicable to single-channel BSS scenarios |
+| OBSS QoS improvement | Tuan et al. [4] | Focuses on inter-BSS interference; does not address intra-BSS AC starvation |
+| DRL-based schemes | Zuo et al. [6], Du et al. [7] | High computational complexity; slow training convergence |
+| Application-layer optimization | Li et al. [8] | Operates at application layer; does not directly adjust MAC-layer EDCA parameters |
+
+**Research Gap**: There is a lack of lightweight, MAC-layer mechanisms that can sense queue states in real-time and dynamically adjust EDCA parameters for starvation avoidance.
 
 ---
 
@@ -54,19 +78,41 @@ These parameters are determined at association time and remain constant througho
 
 ### 3.1 Overview
 
-Queue-Aware Dynamic EDCA (QAD-EDCA) operates at the Access Point (AP) as a centralized monitor and controller. The algorithm periodically samples the queue state and loss metrics of each AC and, upon detecting a starvation condition, applies graduated parameter adjustments to rebalance channel access opportunities. The adjustments are disseminated to all associated stations (STAs) via beacon frames.
+Queue-Aware Dynamic EDCA (QAD-EDCA) operates at the Access Point (AP) as a centralized monitor and controller. The algorithm periodically samples the queue state and loss metrics of each AC and, upon detecting a starvation condition, applies graduated parameter adjustments to rebalance channel access opportunities. Adjusted parameters are disseminated to all associated stations via beacon frames.
 
 ### 3.2 Algorithm Design
 
-The QAD-EDCA algorithm employs three complementary adjustment strategies, applied in escalating order of aggressiveness:
+QAD-EDCA employs three complementary adjustment strategies, applied in escalating order of aggressiveness:
 
-1. **AIFS Reduction for Low-Priority ACs**: Decrease the AIFSN of AC_BE and AC_BK by $\Delta_{AIFS}$, reducing their waiting time before contention.
-2. **CWmin Increase for High-Priority ACs**: Increase the CWmin of AC_VO and AC_VI by a factor $\alpha_{CW}$, moderating their channel access aggressiveness.
-3. **TXOP Limit Reduction for High-Priority ACs**: Decrease the TXOP limit of AC_VO and AC_VI by a factor $\beta_{TXOP}$, reducing the duration of each channel occupation.
+1. **AIFS Reduction for Low-Priority ACs**: Decrease AIFSN of AC_BE and AC_BK by $\Delta_{AIFS}$, reducing their waiting time before contention.
+2. **CWmin Increase for High-Priority ACs**: Increase CWmin of AC_VO and AC_VI by factor $\alpha_{CW}$, moderating their channel access aggressiveness.
+3. **TXOP Limit Reduction for High-Priority ACs**: Decrease TXOP limit of AC_VO and AC_VI by factor $\beta_{TXOP}$, reducing channel occupation duration.
 
-When the starvation condition is resolved (queue length and loss rate return below thresholds), parameters are gradually restored toward their default values using an exponential decay function to avoid oscillation.
+When starvation is resolved, parameters recover toward defaults using an exponential decay function to prevent oscillation.
 
-### 3.3 Pseudo-code
+### 3.3 Mathematical Model
+
+**Channel access probability estimate**: For a station using EDCA, its transmission probability in any time slot can be approximated as:
+
+$$
+\tau_i = \frac{2}{CWmin_i + 1}
+$$
+
+**Fairness quantification**: Jain's Fairness Index [9] measures resource allocation fairness:
+
+$$
+J(\mathbf{x}) = \frac{\left(\sum_{i=1}^{n} x_i\right)^2}{n \sum_{i=1}^{n} x_i^2}, \quad J \in \left[\frac{1}{n}, 1\right]
+$$
+
+where $x_i$ is the normalized throughput of the $i$-th AC. $J = 1$ indicates perfect fairness.
+
+**Recovery function**: After starvation resolution, each parameter $P$ recovers via exponential decay:
+
+$$
+P(t+1) = P(t) + \gamma \cdot \left(P_{default} - P(t)\right), \quad 0 < \gamma < 1
+$$
+
+### 3.4 Pseudo-code
 
 ```
 Algorithm: QAD-EDCA Dynamic Parameter Adjustment
@@ -76,11 +122,10 @@ Input: Monitoring interval T_mon, thresholds Q_th, P_th
 
 Every T_mon seconds at the AP:
   1. For each AC in {BE, BK}:
-       Measure Q_i = queue length of AC_i
+       Measure Q_i = queue occupancy ratio of AC_i
        Measure P_loss_i = packet loss rate of AC_i
 
-  2. If (Q_BE > Q_th) OR (P_loss_BE > P_th)
-        OR (Q_BK > Q_th) OR (P_loss_BK > P_th):
+  2. If Starvation(AC_BE) OR Starvation(AC_BK):
        // Starvation detected -- apply adjustments
        a. AIFSN_BE = max(AIFSN_BE - delta_AIFS, 2)
           AIFSN_BK = max(AIFSN_BK - delta_AIFS, 2)
@@ -91,12 +136,8 @@ Every T_mon seconds at the AP:
 
   3. Else:
        // No starvation -- recover toward defaults
-       a. AIFSN_BE = AIFSN_BE + gamma * (AIFSN_default_BE - AIFSN_BE)
-          AIFSN_BK = AIFSN_BK + gamma * (AIFSN_default_BK - AIFSN_BK)
-       b. CWmin_VO = CWmin_VO + gamma * (CWmin_default_VO - CWmin_VO)
-          CWmin_VI = CWmin_VI + gamma * (CWmin_default_VI - CWmin_VI)
-       c. TXOP_VO = TXOP_VO + gamma * (TXOP_default_VO - TXOP_VO)
-          TXOP_VI = TXOP_VI + gamma * (TXOP_default_VI - TXOP_VI)
+       For each parameter P in {AIFSN, CWmin, TXOP}:
+         P(t+1) = P(t) + gamma * (P_default - P(t))
 
   4. Broadcast updated parameters to all STAs via beacon frame
 
@@ -105,16 +146,16 @@ Every T_mon seconds at the AP:
          Partially revert adjustments (reduce delta by 50%)
 ```
 
-### 3.4 Key Parameters
+### 3.5 Key Parameters
 
-| Parameter | Symbol | Default Value | Description |
-|-----------|--------|---------------|-------------|
+| Parameter | Symbol | Default | Description |
+|-----------|--------|---------|-------------|
 | Monitoring interval | $T_{mon}$ | 100 ms | How often the AP checks queue states |
-| Queue threshold | $Q_{th}$ | 80% of buffer size | Triggers starvation detection |
-| Loss rate threshold | $P_{th}$ | 10% | Triggers starvation detection |
-| AIFS adjustment step | $\Delta_{AIFS}$ | 1 | AIFSN reduction per adjustment cycle |
-| CW scaling factor | $\alpha_{CW}$ | 2.0 | Multiplier for CWmin increase |
-| TXOP scaling factor | $\beta_{TXOP}$ | 0.75 | Multiplier for TXOP reduction |
+| Queue threshold | $Q_{th}$ | 80% | Queue occupancy ratio triggering detection |
+| Loss rate threshold | $P_{th}$ | 10% | Packet loss rate triggering detection |
+| AIFS adjustment step | $\Delta_{AIFS}$ | 1 | AIFSN reduction per cycle |
+| CW scaling factor | $\alpha_{CW}$ | 2.0 | CWmin increase multiplier |
+| TXOP scaling factor | $\beta_{TXOP}$ | 0.75 | TXOP reduction multiplier |
 | Recovery factor | $\gamma$ | 0.3 | Exponential decay toward defaults |
 
 ---
@@ -123,11 +164,11 @@ Every T_mon seconds at the AP:
 
 ### 4.1 Simulation Environment
 
-We use **OMNeT++ 6.1** with **INET Framework 4.5** as our simulation platform. INET provides a complete implementation of the IEEE 802.11e EDCA mechanism through the `Ieee80211Mac` module with QoS support enabled via the `qosStation` parameter.
+We use **OMNeT++ 6.1** with **INET Framework 4.5** as our simulation platform.
 
 ### 4.2 Network Topology
 
-The simulated network consists of a single Access Point (AP) operating in infrastructure Basic Service Set (BSS) mode, with $N$ associated wireless stations (STAs). We evaluate four network sizes: $N \in \{5, 10, 15, 20\}$.
+The simulated network consists of a single AP operating in infrastructure BSS mode with $N$ associated wireless stations. We evaluate four network sizes: $N \in \{5, 10, 15, 20\}$.
 
 ### 4.3 Traffic Model
 
@@ -135,42 +176,63 @@ The simulated network consists of a single Access Point (AP) operating in infras
 |----|-------------|-------------|---------------|-----------|
 | AC_VO | VoIP (G.711) | 160 bytes | 20 ms | 64 kbps |
 | AC_VI | Video stream | 1280 bytes | 10 ms | 1.024 Mbps |
-| AC_BE | Bulk transfer (FTP/TCP or saturated UDP) | 1500 bytes | Variable | Saturated |
+| AC_BE | Bulk transfer (saturated UDP) | 1500 bytes | Variable | Saturated |
 | AC_BK | Background sync | 512 bytes | 100 ms | 40.96 kbps |
 
 ### 4.4 Experimental Variables
 
 1. **High-priority STA proportion**: 20%, 40%, 60%, 80% of STAs generate VO/VI traffic.
-2. **Overall network load**: Light ($<30\%$ capacity), Medium ($30\text{--}60\%$), Heavy ($60\text{--}90\%$), Saturated ($>90\%$).
-3. **QAD-EDCA threshold parameters**: We sweep $Q_{th} \in \{50\%, 70\%, 80\%, 90\%\}$ and $P_{th} \in \{5\%, 10\%, 15\%, 20\%\}$ to evaluate sensitivity.
+2. **Overall network load**: Light (<30%), Medium (30–60%), Heavy (60–90%), Saturated (>90%).
+3. **QAD-EDCA threshold parameters**: Sweep $Q_{th} \in \{50\%, 70\%, 80\%, 90\%\}$ and $P_{th} \in \{5\%, 10\%, 15\%, 20\%\}$.
 
 ### 4.5 Performance Metrics
 
-- **Per-AC throughput** (bits/s)
-- **Per-AC average delay and delay jitter** (seconds)
+- **Per-AC throughput** (Mbps)
+- **Per-AC average delay and delay jitter** (ms)
 - **Per-AC packet loss rate** (%)
-- **Jain's Fairness Index** across all ACs: $J = \frac{(\sum_{i=1}^{n} x_i)^2}{n \sum_{i=1}^{n} x_i^2}$
-- **QoS satisfaction**: Whether AC_VO delay $< 150$ ms and AC_VI delay $< 300$ ms
+- **Jain's Fairness Index** across all ACs
+- **QoS satisfaction**: AC_VO delay < 150 ms and AC_VI delay < 300 ms
 
 ### 4.6 Comparison Schemes
 
-1. **Standard EDCA** (Baseline): Fixed default parameters per IEEE 802.11e.
-2. **Adaptive EDCA (Banchs 2010)**: Optimal EDCA parameter configuration based on analytical model [1].
-3. **Starvation Prediction EDCA (Engelstad 2005)**: Delay and throughput analysis with starvation prediction [2].
-4. **QAD-EDCA** (Proposed): Our queue-aware dynamic adaptation scheme.
+1. **Standard EDCA** (Baseline): Fixed default parameters per IEEE 802.11 [1].
+2. **Tuned Static EDCA**: Optimized static AIFSN/CW configuration based on findings of [2], representing the best achievable performance without dynamic adaptation.
+3. **PDCF-DRL (Zuo 2025)**: DRL-based contention window backoff [6].
+4. **QAD-EDCA** (Proposed): Queue-aware dynamic adaptation scheme.
 
 ---
 
-## 5. Project Plan and Timeline
+## 5. Expected Analysis and Discussion
+
+### 5.1 Expected Results
+
+Based on findings in the literature:
+- **Starvation mitigation**: QAD-EDCA should reduce AC_BE/AC_BK packet loss from >40% (standard EDCA) to <15% when high-priority STA proportion reaches 60%–80%.
+- **Fairness improvement**: Jain's Fairness Index from ~0.4 (standard EDCA) to >0.8.
+- **QoS preservation**: AC_VO delay <150 ms and AC_VI delay <300 ms maintained during adjustments.
+- **Computational efficiency**: No training phase required, unlike DRL schemes [6][7].
+
+### 5.2 Discussion Topics
+
+- Sensitivity analysis of threshold parameters ($Q_{th}$, $P_{th}$)
+- Trade-off between monitoring interval $T_{mon}$ and responsiveness vs. stability
+- Effect of recovery factor $\gamma$ on oscillation behavior
+- Performance comparison with DRL schemes at different network scales
+
+---
+
+## 6. Project Plan and Timeline
+
+### 6.1 Schedule
 
 | Week | Period | Tasks | Deliverables |
 |------|--------|-------|-------------|
-| 1--2 | Apr 15 -- Apr 28 | Environment setup; Implement and validate baseline EDCA simulation; Reproduce standard EDCA starvation under high load | Baseline simulation results; Starvation demonstration plots |
-| 3--4 | Apr 29 -- May 12 | Implement QAD-EDCA algorithm in OMNeT++/INET; Integrate with Edcaf module; Unit testing | Working QAD-EDCA module; Preliminary comparison results |
-| 5--6 | May 13 -- May 26 | Run full experimental matrix (N, load, thresholds); Collect throughput, delay, loss, fairness data; Implement literature comparison schemes | Complete simulation data; Analysis scripts |
-| 7--8 | May 27 -- Jun 10 | Analyze results and generate figures; Write final report; Prepare presentation slides | Final report (PDF); Presentation slides |
+| 1–2 | Apr 15 – Apr 28 | Environment setup; Implement and validate baseline EDCA simulation; Reproduce starvation under high load | Baseline results; Starvation demonstration plots |
+| 3–4 | Apr 29 – May 12 | Implement QAD-EDCA algorithm in OMNeT++/INET; Integrate with Edcaf module; Unit testing | Working QAD-EDCA module; Preliminary comparison |
+| 5–6 | May 13 – May 26 | Run full experimental matrix; Collect throughput, delay, loss, fairness data; Implement comparison schemes | Complete simulation data; Analysis scripts |
+| 7–8 | May 27 – Jun 10 | Analyze results and generate figures; Write final report; Prepare presentation slides | Final report (PDF); Presentation slides |
 
-### Gantt Chart
+### 6.2 Gantt Chart
 
 ```
 Task                          W1   W2   W3   W4   W5   W6   W7   W8
@@ -178,16 +240,14 @@ Task                          W1   W2   W3   W4   W5   W6   W7   W8
 Environment & Baseline       ████ ████
 QAD-EDCA Implementation                ████ ████
 Experiments & Data Collection                     ████ ████
-Literature Comparison                             ████ ████
+Comparison Scheme Impl.                           ████ ████
 Analysis & Figures                                          ████ ████
 Report Writing                                         ████ ████ ████
 Presentation Prep                                                ████
                                                           Deadline: 6/10
 ```
 
----
-
-## 6. Team Responsibilities
+### 6.3 Team Responsibilities
 
 | Role | Member | Tasks |
 |------|--------|-------|
@@ -202,16 +262,22 @@ Presentation Prep                                                ████
 
 ## 7. References
 
-[1] A. Banchs and X. Perez-Costa, "Providing throughput guarantees in IEEE 802.11e wireless LANs," in *Proc. IEEE Wireless Communications and Networking Conference (WCNC)*, 2002; Extended analysis in A. Banchs, A. Azcorra, C. Garcia, and R. Cuevas, "Applications and challenges of the 802.11e EDCA mechanism: a survey," *IEEE Communications Surveys & Tutorials*, vol. 12, no. 1, 2010.
+[1] IEEE Standard 802.11-2020, "IEEE Standard for Information Technology — Wireless LAN Medium Access Control (MAC) and Physical Layer (PHY) Specifications," IEEE, 2020.
 
-[2] P. E. Engelstad, O. N. Osterbo, "Delay and throughput analysis of IEEE 802.11e EDCA with starvation prediction," in *Proc. IEEE Conference on Local Computer Networks (LCN)*, 2005.
+[2] G. O. Ugwu, U. N. Nwawelu, and M. A. Ahaneku, "Effect of service differentiation on QoS in IEEE 802.11e enhanced distributed channel access: a simulation approach," *Journal of Engineering and Applied Science*, vol. 69, no. 1, pp. 1–15, 2022. DOI: 10.1186/s44147-021-00055-3.
 
-[3] I. Inan, F. Keceli, and E. Ayanoglu, "Fairness Provision in the IEEE 802.11e Infrastructure Basic Service Set," arXiv preprint arXiv:0704.1842, 2007.
+[3] J. Lee, J. Choi, and S. Bahk, "Starvation avoidance-based dynamic multichannel access for low priority traffics in 802.11ac communication systems," *Computers & Electrical Engineering*, vol. 82, art. 106554, 2020. DOI: 10.1016/j.compeleceng.2020.106554.
 
-[4] J. Lee, J. Choi, and S. Bahk, "Starvation avoidance-based dynamic multichannel access for low priority traffics in 802.11ac," *Computers & Electrical Engineering*, vol. 82, 2020.
+[4] Y. P. Tuan, L. A. Chen, T. Y. Lin, et al., "Improving QoS mechanisms for IEEE 802.11ax with overlapping basic service sets," *Wireless Networks*, vol. 29, pp. 387–401, 2023. DOI: 10.1007/s11276-022-03148-w.
 
-[5] IEEE Standard 802.11e-2005, "IEEE Standard for Information technology--Local and metropolitan area networks--Specific requirements--Part 11: Wireless LAN Medium Access Control (MAC) and Physical Layer (PHY) Specifications, Amendment 8: Medium Access Control (MAC) Quality of Service Enhancements," IEEE, 2005.
+[5] P. Yi, W. Cheng, J. Wang, J. Pan, Y. Ouyang, and W. Zhang, "Intelligent Multi-link EDCA Optimization for Delay-Bounded QoS in Wi-Fi 7," arXiv preprint arXiv:2509.25855, 2025.
 
-[6] R. Jain, D. Chiu, and W. Hawe, "A quantitative measure of fairness and discrimination for resource allocation in shared computer systems," *DEC Research Report TR-301*, 1984.
+[6] Z. Zuo, D. Wang, X. Nie, X. Pan, M. Deng, and M. Ma, "PDCF-DRL: a contention window backoff scheme based on deep reinforcement learning for differentiating access categories," *The Journal of Supercomputing*, vol. 81, art. 213, 2025. DOI: 10.1007/s11227-024-06634-4.
 
-[7] IEEE Standard 802.11-2020, "IEEE Standard for Information Technology--Telecommunications and Information Exchange between Systems--Local and Metropolitan Area Networks--Specific Requirements--Part 11: Wireless LAN Medium Access Control (MAC) and Physical Layer (PHY) Specifications," IEEE, 2020.
+[7] X. Du, X. Fang, R. He, L. Yan, L. Lu, and C. Luo, "Federated deep reinforcement learning-based intelligent channel access in dense Wi-Fi deployments," arXiv preprint arXiv:2409.01004, 2024.
+
+[8] Q. Li, B. Lv, Y. Hong, and R. Wang, "ReinWiFi: Application-layer QoS optimization of WiFi networks with reinforcement learning," arXiv preprint arXiv:2405.03526, 2024.
+
+[9] R. Jain, D. Chiu, and W. Hawe, "A quantitative measure of fairness and discrimination for resource allocation in shared computer systems," *DEC Research Report TR-301*, 1984.
+
+[10] IEEE Standard 802.11ax-2021, "IEEE Standard for Information Technology — Amendment 1: Enhancements for High-Efficiency WLAN," IEEE, 2021.
