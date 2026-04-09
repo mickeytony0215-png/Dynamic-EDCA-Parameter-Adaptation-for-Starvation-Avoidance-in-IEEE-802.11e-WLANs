@@ -1,0 +1,10 @@
+venv/
+out/
+__pycache__/
+*.pyc
+*.o
+*.so
+results/*.sca
+results/*.vec
+results/*.sqlite
+figures/
