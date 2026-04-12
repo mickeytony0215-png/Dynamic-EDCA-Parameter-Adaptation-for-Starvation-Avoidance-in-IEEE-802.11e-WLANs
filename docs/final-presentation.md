@@ -35,15 +35,15 @@
 
 | AC | CWmin | CWmax | AIFSN | TXOP |
 |----|-------|-------|-------|------|
-| AC_VO | 3 | 7 | 2 | 1.504 ms |
-| AC_VI | 7 | 15 | 2 | 3.008 ms |
-| AC_BE | 15 | 1023 | 3 | 0 |
-| AC_BK | 15 | 1023 | 7 | 0 |
+| AC_BK | 15 | 1023 | 7 | 2.528 ms |
+| AC_BE | 15 | 1023 | 3 | 2.528 ms |
+| AC_VI | 7 | 15 | 2 | 4.096 ms |
+| AC_VO | 3 | 7 | 2 | 2.080 ms |
 
 ### Slide 2-2: The Starvation Problem
 - Figure: high-priority STA proportion vs. AC_BE/AC_BK throughput collapse
 - Ugwu et al. [2]: AIFSN has significantly more influence on QoS than CW
-- Lee et al. [3]: severe starvation of low-priority traffic in 802.11ac
+- Mammeri et al. [3]: severe starvation of low-priority traffic in 802.11ac
 
 ### Slide 2-3: Formal Problem Statement
 - Starvation condition definition:
@@ -224,7 +224,7 @@ Every T_mon seconds at AP:
 
 [1] IEEE Standard 802.11-2020.
 [2] G. O. Ugwu et al., "Effect of service differentiation on QoS in IEEE 802.11e EDCA," *J. Eng. Appl. Sci.*, 2022.
-[3] J. Lee et al., "Starvation avoidance-based dynamic multichannel access for low priority traffics in 802.11ac," *Comput. Electr. Eng.*, 2020.
+[3] S. Mammeri et al., "Starvation avoidance-based dynamic multichannel access for low priority traffics in 802.11ac," *Comput. Electr. Eng.*, 2021.
 [4] Y. P. Tuan et al., "Improving QoS mechanisms for IEEE 802.11ax with OBSS," *Wireless Netw.*, 2023.
 [5] "Intelligent Multi-link EDCA Optimization for Delay-Bounded QoS in Wi-Fi 7," arXiv:2509.25855, 2025.
 [6] Z. Zuo et al., "PDCF-DRL: a contention window backoff scheme based on DRL," *J. Supercomput.*, 2025.

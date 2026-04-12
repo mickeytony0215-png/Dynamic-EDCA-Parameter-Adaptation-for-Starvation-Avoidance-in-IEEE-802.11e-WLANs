@@ -15,7 +15,7 @@
 
 The Enhanced Distributed Channel Access (EDCA) mechanism in IEEE 802.11 provides Quality of Service (QoS) differentiation for WLANs. EDCA classifies traffic into four Access Categories (ACs) — Voice (AC_VO), Video (AC_VI), Best Effort (AC_BE), and Background (AC_BK) — each configured with distinct channel access parameters: Arbitration Inter-Frame Space Number (AIFSN), Contention Window (CWmin/CWmax), and Transmission Opportunity limit (TXOP limit) [1].
 
-However, recent research continues to expose fundamental flaws in EDCA's static parameter configuration. Ugwu et al. [2] systematically analyzed the effect of service differentiation on QoS in EDCA through MATLAB simulation, confirming that high-priority traffic severely starves low-priority traffic under saturation, and that AIFSN has significantly more influence on QoS than CW. Lee et al. [3] observed that the priority mechanism in IEEE 802.11ac EDCA causes severe starvation for low-priority traffic, proposing a Starvation-avoidance Dynamic Multichannel Access (SDMA) method.
+However, recent research continues to expose fundamental flaws in EDCA's static parameter configuration. Ugwu et al. [2] systematically analyzed the effect of service differentiation on QoS in EDCA through MATLAB simulation, confirming that high-priority traffic severely starves low-priority traffic under saturation, and that AIFSN has significantly more influence on QoS than CW. Mammeri et al. [3] observed that the priority mechanism in IEEE 802.11ac EDCA causes severe starvation for low-priority traffic, proposing a Starvation-avoidance Dynamic Multichannel Access (SDMA) method.
 
 ### 1.2 EDCA Evolution from Wi-Fi 6 to Wi-Fi 7
 
@@ -25,7 +25,7 @@ IEEE 802.11be (Wi-Fi 7) further introduces Multi-Link Operation (MLO), bringing 
 
 ### 1.3 Machine Learning-Driven EDCA Optimization
 
-Deep Reinforcement Learning (DRL) has been extensively applied to dynamic EDCA parameter adjustment in recent years. Zuo et al. [6] proposed PDCF-DRL, integrating DRL into the EDCA contention window backoff mechanism, achieving normalized throughput above 76% and collision rates below 18% across 20–120 station scenarios, significantly outperforming traditional EDCA (throughput 13%–67%, collision rates 29%–85%). Du et al. [7] combined Federated Learning (FL) with Deep Deterministic Policy Gradient (DDPG) for intelligent channel access in dense Wi-Fi deployments, reducing MAC delay by 7.96%–25.24% in static scenarios. Li et al. [8] proposed ReinWiFi, a reinforcement learning-based framework that significantly outperforms EDCA in commercial environments with unknown interference.
+Deep Reinforcement Learning (DRL) has been extensively applied to dynamic EDCA parameter adjustment in recent years. Zuo et al. [6] proposed PDCF-DRL, integrating DRL into the EDCA contention window backoff mechanism, achieving normalized throughput above 76% and collision rates below 18% across 20–120 station scenarios. In single AC_VO traffic scenarios, traditional EDCA exhibits collision rates of 64%–85% and throughput of only 13%–32% with 20–120 stations, whereas PDCF-DRL maintains collision rates of 7%–16% and throughput of 77%–85%. Du et al. [7] combined Federated Learning (FL) with Deep Deterministic Policy Gradient (DDPG) for intelligent channel access in dense Wi-Fi deployments, outperforming conventional DRL by up to 45.9% in MAC delay reduction in dynamic scenarios. Li et al. [8] proposed ReinWiFi, a reinforcement learning-based framework that significantly outperforms EDCA in commercial environments with unknown interference.
 
 Despite their impressive performance, DRL methods are limited by high computational complexity and training convergence time, restricting real-time deployment on resource-constrained devices. This project explores a lightweight, rule-based adaptive scheme that achieves effective starvation avoidance at lower computational cost.
 
@@ -50,22 +50,35 @@ where:
 
 ### 2.2 Limitations of Static EDCA
 
-Standard EDCA assigns fixed parameters per IEEE 802.11-2020 [1]:
+Standard EDCA assigns fixed parameters per IEEE 802.11-2020 Table 9-155 [1]. The contention window values are derived from the PHY-layer constants $aCWmin$ and $aCWmax$ using the following encoding:
+
+$$CWmin = 2^{ECWmin} - 1, \quad CWmax = 2^{ECWmax} - 1$$
+
+The default EDCA parameter set for non-AP STAs (OFDM PHY, Clause 17–21) is:
 
 | AC | CWmin | CWmax | AIFSN | TXOP limit |
 |----|-------|-------|-------|------------|
-| AC_VO | $(aCWmin+1)/4 - 1$ | $(aCWmin+1)/2 - 1$ | 2 | 1.504 ms |
-| AC_VI | $(aCWmin+1)/2 - 1$ | $aCWmin$ | 2 | 3.008 ms |
-| AC_BE | $aCWmin$ | $aCWmax$ | 3 | 0 |
-| AC_BK | $aCWmin$ | $aCWmax$ | 7 | 0 |
+| AC_BK | $aCWmin$ | $aCWmax$ | 7 | 2.528 ms |
+| AC_BE | $aCWmin$ | $aCWmax$ | 3 | 2.528 ms |
+| AC_VI | $(aCWmin+1)/2 - 1$ | $aCWmin$ | 2 | 4.096 ms |
+| AC_VO | $(aCWmin+1)/4 - 1$ | $(aCWmin+1)/2 - 1$ | 2 | 2.080 ms |
 
-As verified by Ugwu et al. [2], these static parameters cause drastic increases in packet loss for low-priority traffic under saturation load.
+For OFDM PHY ($aCWmin = 15$, $aCWmax = 1023$), the concrete values are:
+
+| AC | CWmin | CWmax | AIFSN | TXOP limit |
+|----|-------|-------|-------|------------|
+| AC_BK | 15 | 1023 | 7 | 2.528 ms |
+| AC_BE | 15 | 1023 | 3 | 2.528 ms |
+| AC_VI | 7 | 15 | 2 | 4.096 ms |
+| AC_VO | 3 | 7 | 2 | 2.080 ms |
+
+These parameters are determined at association time and remain constant throughout the session. The protocol lacks any feedback mechanism to detect or alleviate starvation. As verified by Ugwu et al. [2], these static parameters cause drastic increases in packet loss for low-priority traffic under saturation load.
 
 ### 2.3 Limitations of Existing Approaches
 
 | Approach | Representative Work | Key Limitations |
 |----------|-------------------|-----------------|
-| Dynamic multichannel access | Lee et al. [3] | Relies on 802.11ac channel bonding; not directly applicable to single-channel BSS scenarios |
+| Dynamic multichannel access | Mammeri et al. [3] | Relies on 802.11ac channel bonding; not directly applicable to single-channel BSS scenarios |
 | OBSS QoS improvement | Tuan et al. [4] | Focuses on inter-BSS interference; does not address intra-BSS AC starvation |
 | DRL-based schemes | Zuo et al. [6], Du et al. [7] | High computational complexity; slow training convergence |
 | Application-layer optimization | Li et al. [8] | Operates at application layer; does not directly adjust MAC-layer EDCA parameters |
@@ -266,7 +279,7 @@ Presentation Prep                                                ████
 
 [2] G. O. Ugwu, U. N. Nwawelu, and M. A. Ahaneku, "Effect of service differentiation on QoS in IEEE 802.11e enhanced distributed channel access: a simulation approach," *Journal of Engineering and Applied Science*, vol. 69, no. 1, pp. 1–15, 2022. DOI: 10.1186/s44147-021-00055-3.
 
-[3] J. Lee, J. Choi, and S. Bahk, "Starvation avoidance-based dynamic multichannel access for low priority traffics in 802.11ac communication systems," *Computers & Electrical Engineering*, vol. 82, art. 106554, 2020. DOI: 10.1016/j.compeleceng.2020.106554.
+[3] S. Mammeri, M. Yazid, R. Kacimi, and L. Bouallouche-Medjkoune, "Starvation avoidance-based dynamic multichannel access for low priority traffics in 802.11ac communication systems," *Computers & Electrical Engineering*, vol. 90, art. 106942, 2021. DOI: 10.1016/j.compeleceng.2020.106942.
 
 [4] Y. P. Tuan, L. A. Chen, T. Y. Lin, et al., "Improving QoS mechanisms for IEEE 802.11ax with overlapping basic service sets," *Wireless Networks*, vol. 29, pp. 387–401, 2023. DOI: 10.1007/s11276-022-03148-w.
 

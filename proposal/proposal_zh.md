@@ -15,7 +15,7 @@
 
 IEEE 802.11 標準中的增強型分散式通道存取（Enhanced Distributed Channel Access, EDCA）機制為無線區域網路提供了服務品質（QoS）差異化能力。EDCA 將流量分為四種存取類別（Access Category, AC）——語音（AC_VO）、視訊（AC_VI）、盡力而為（AC_BE）及背景（AC_BK），並為每種類別分配不同的通道存取參數：仲裁幀間距編號（AIFSN）、競爭視窗（CWmin/CWmax）及傳輸機會限制（TXOP limit）[1]。
 
-然而，近年研究持續揭示 EDCA 靜態參數配置的根本缺陷。Ugwu 等人 [2] 透過 MATLAB 模擬系統性地分析了 EDCA 中服務差異化對 QoS 的影響，證實高優先權流量在飽和狀態下會嚴重侵佔低優先權流量的通道資源，且 AIFSN 對 QoS 的影響顯著大於 CW。Lee 等人 [3] 在 IEEE 802.11ac 系統中觀察到，EDCA 的優先權機制使低優先權流量面臨嚴重飢餓，並提出基於動態多通道存取的飢餓迴避方法（SDMA）。
+然而，近年研究持續揭示 EDCA 靜態參數配置的根本缺陷。Ugwu 等人 [2] 透過 MATLAB 模擬系統性地分析了 EDCA 中服務差異化對 QoS 的影響，證實高優先權流量在飽和狀態下會嚴重侵佔低優先權流量的通道資源，且 AIFSN 對 QoS 的影響顯著大於 CW。Mammeri 等人 [3] 在 IEEE 802.11ac 系統中觀察到，EDCA 的優先權機制使低優先權流量面臨嚴重飢餓，並提出基於動態多通道存取的飢餓迴避方法（SDMA）。
 
 ### 1.2 從 Wi-Fi 6 到 Wi-Fi 7 的 EDCA 演進
 
@@ -25,7 +25,7 @@ IEEE 802.11be（Wi-Fi 7）進一步引入多鏈路操作（Multi-Link Operation,
 
 ### 1.3 機器學習驅動的 EDCA 最佳化
 
-近年來，深度強化學習（DRL）技術被廣泛應用於 EDCA 參數的動態調整。Zuo 等人 [6] 提出 PDCF-DRL 方案，將 DRL 整合至 EDCA 的競爭視窗退避機制中，在 20–120 個站台的場景下，正規化吞吐量維持在 76% 以上、碰撞率控制在 18% 以下，顯著優於傳統 EDCA（吞吐量 13%–67%、碰撞率 29%–85%）。Du 等人 [7] 結合聯邦學習（FL）與深度確定性策略梯度（DDPG）演算法，提出適用於密集 Wi-Fi 部署的智慧通道存取機制，在靜態場景中降低 MAC 延遲 7.96%–25.24%。Li 等人 [8] 提出 ReinWiFi 框架，利用強化學習在應用層最佳化 Wi-Fi 網路的 QoS，在有未知干擾的商用環境中顯著優於 EDCA 機制。
+近年來，深度強化學習（DRL）技術被廣泛應用於 EDCA 參數的動態調整。Zuo 等人 [6] 提出 PDCF-DRL 方案，將 DRL 整合至 EDCA 的競爭視窗退避機制中，在 20–120 個站台的場景下，正規化吞吐量維持在 76% 以上、碰撞率控制在 18% 以下。在單一 AC_VO 流量場景中，傳統 EDCA 的碰撞率高達 64%–85%、吞吐量僅 13%–32%，而 PDCF-DRL 則將碰撞率控制在 7%–16%、吞吐量維持在 77%–85%。Du 等人 [7] 結合聯邦學習（FL）與深度確定性策略梯度（DDPG）演算法，提出適用於密集 Wi-Fi 部署的智慧通道存取機制，在動態場景中相較傳統 DRL 方案降低 MAC 延遲達 45.9%。Li 等人 [8] 提出 ReinWiFi 框架，利用強化學習在應用層最佳化 Wi-Fi 網路的 QoS，在有未知干擾的商用環境中顯著優於 EDCA 機制。
 
 儘管 DRL 方法展現了出色的效能，其高運算複雜度和訓練收斂時間限制了在資源受限設備上的即時部署。本專案探索一種輕量級、基於規則的自適應方案，以較低的運算成本達到有效的飢餓迴避。
 
@@ -52,22 +52,35 @@ $$
 
 ### 2.2 靜態 EDCA 的局限性
 
-標準 EDCA 依據 IEEE 802.11-2020 [1] 規範分配固定參數：
+標準 EDCA 依據 IEEE 802.11-2020 Table 9-155 [1] 規範分配固定參數。競爭視窗值由 PHY 層常數 $aCWmin$ 和 $aCWmax$ 透過以下編碼推導：
+
+$$CWmin = 2^{ECWmin} - 1, \quad CWmax = 2^{ECWmax} - 1$$
+
+非 AP STA 的預設 EDCA 參數集（OFDM PHY，Clause 17–21）如下：
 
 | AC | CWmin | CWmax | AIFSN | TXOP limit |
 |----|-------|-------|-------|------------|
-| AC_VO | $(aCWmin+1)/4 - 1$ | $(aCWmin+1)/2 - 1$ | 2 | 1.504 ms |
-| AC_VI | $(aCWmin+1)/2 - 1$ | $aCWmin$ | 2 | 3.008 ms |
-| AC_BE | $aCWmin$ | $aCWmax$ | 3 | 0 |
-| AC_BK | $aCWmin$ | $aCWmax$ | 7 | 0 |
+| AC_BK | $aCWmin$ | $aCWmax$ | 7 | 2.528 ms |
+| AC_BE | $aCWmin$ | $aCWmax$ | 3 | 2.528 ms |
+| AC_VI | $(aCWmin+1)/2 - 1$ | $aCWmin$ | 2 | 4.096 ms |
+| AC_VO | $(aCWmin+1)/4 - 1$ | $(aCWmin+1)/2 - 1$ | 2 | 2.080 ms |
 
-如 Ugwu 等人 [2] 所驗證，這些靜態參數在飽和負載下導致低優先權流量的封包遺失率急劇上升，且 EDCA 協定缺乏任何回饋機制來偵測或緩解飢餓狀態。
+以 OFDM PHY（$aCWmin = 15$、$aCWmax = 1023$）為例，具體數值為：
+
+| AC | CWmin | CWmax | AIFSN | TXOP limit |
+|----|-------|-------|-------|------------|
+| AC_BK | 15 | 1023 | 7 | 2.528 ms |
+| AC_BE | 15 | 1023 | 3 | 2.528 ms |
+| AC_VI | 7 | 15 | 2 | 4.096 ms |
+| AC_VO | 3 | 7 | 2 | 2.080 ms |
+
+這些參數在關聯時即確定，且在整個連線期間保持不變。該協定缺乏任何回饋機制來偵測或緩解飢餓狀態。如 Ugwu 等人 [2] 所驗證，這些靜態參數在飽和負載下導致低優先權流量的封包遺失率急劇上升。
 
 ### 2.3 現有方案的不足
 
 | 方案類別 | 代表文獻 | 主要限制 |
 |----------|---------|---------|
-| 動態多通道存取 | Lee 等人 [3] | 依賴 802.11ac 通道綁定，不直接適用於單通道 BSS 場景 |
+| 動態多通道存取 | Mammeri 等人 [3] | 依賴 802.11ac 通道綁定，不直接適用於單通道 BSS 場景 |
 | OBSS QoS 改善 | Tuan 等人 [4] | 聚焦於跨 BSS 干擾，未處理單一 BSS 內的 AC 間飢餓 |
 | DRL-based 方案 | Zuo 等人 [6]、Du 等人 [7] | 運算複雜度高，訓練收斂慢，不適合資源受限的 AP |
 | 應用層最佳化 | Li 等人 [8] | 作用於應用層排程，未直接調整 MAC 層 EDCA 參數 |
@@ -268,7 +281,7 @@ QAD-EDCA 實作                          ████ ████
 
 [2] G. O. Ugwu, U. N. Nwawelu, and M. A. Ahaneku, "Effect of service differentiation on QoS in IEEE 802.11e enhanced distributed channel access: a simulation approach," *Journal of Engineering and Applied Science*, vol. 69, no. 1, pp. 1–15, 2022. DOI: 10.1186/s44147-021-00055-3.
 
-[3] J. Lee, J. Choi, and S. Bahk, "Starvation avoidance-based dynamic multichannel access for low priority traffics in 802.11ac communication systems," *Computers & Electrical Engineering*, vol. 82, art. 106554, 2020. DOI: 10.1016/j.compeleceng.2020.106554.
+[3] S. Mammeri, M. Yazid, R. Kacimi, and L. Bouallouche-Medjkoune, "Starvation avoidance-based dynamic multichannel access for low priority traffics in 802.11ac communication systems," *Computers & Electrical Engineering*, vol. 90, art. 106942, 2021. DOI: 10.1016/j.compeleceng.2020.106942.
 
 [4] Y. P. Tuan, L. A. Chen, T. Y. Lin, et al., "Improving QoS mechanisms for IEEE 802.11ax with overlapping basic service sets," *Wireless Networks*, vol. 29, pp. 387–401, 2023. DOI: 10.1007/s11276-022-03148-w.
 
