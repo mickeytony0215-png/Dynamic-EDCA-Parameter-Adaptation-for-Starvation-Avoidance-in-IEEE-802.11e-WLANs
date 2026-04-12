@@ -35,15 +35,15 @@
 
 | AC | CWmin | CWmax | AIFSN | TXOP |
 |----|-------|-------|-------|------|
-| AC_VO | 3 | 7 | 2 | 1.504 ms |
-| AC_VI | 7 | 15 | 2 | 3.008 ms |
-| AC_BE | 15 | 1023 | 3 | 0 |
-| AC_BK | 15 | 1023 | 7 | 0 |
+| AC_BK | 15 | 1023 | 7 | 2.528 ms |
+| AC_BE | 15 | 1023 | 3 | 2.528 ms |
+| AC_VI | 7 | 15 | 2 | 4.096 ms |
+| AC_VO | 3 | 7 | 2 | 2.080 ms |
 
 ### 投影片 2-2：飢餓問題
 - 圖示：高優先權 STA 比例 vs. AC_BE/AC_BK 吞吐量急劇下降
 - Ugwu 等人 [2] 驗證：AIFSN 對 QoS 影響顯著大於 CW
-- Lee 等人 [3]：802.11ac 中低優先權流量面臨嚴重飢餓
+- Mammeri 等人 [3]：802.11ac 中低優先權流量面臨嚴重飢餓
 
 ### 投影片 2-3：問題形式化
 - 飢餓條件定義：
@@ -224,7 +224,7 @@ $$
 
 [1] IEEE Standard 802.11-2020.
 [2] G. O. Ugwu et al., "Effect of service differentiation on QoS in IEEE 802.11e EDCA," *J. Eng. Appl. Sci.*, 2022.
-[3] J. Lee et al., "Starvation avoidance-based dynamic multichannel access for low priority traffics in 802.11ac," *Comput. Electr. Eng.*, 2020.
+[3] S. Mammeri et al., "Starvation avoidance-based dynamic multichannel access for low priority traffics in 802.11ac," *Comput. Electr. Eng.*, 2021.
 [4] Y. P. Tuan et al., "Improving QoS mechanisms for IEEE 802.11ax with OBSS," *Wireless Netw.*, 2023.
 [5] "Intelligent Multi-link EDCA Optimization for Delay-Bounded QoS in Wi-Fi 7," arXiv:2509.25855, 2025.
 [6] Z. Zuo et al., "PDCF-DRL: a contention window backoff scheme based on DRL," *J. Supercomput.*, 2025.
