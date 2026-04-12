@@ -35,7 +35,7 @@ Despite their impressive performance, DRL methods are limited by high computatio
 
 ### 2.1 Formal Definition of Starvation Condition
 
-We formally define the starvation condition for a low-priority Access Category $AC_i$ (where $i \in \{BE, BK\}$) as:
+Prior studies have described EDCA starvation in qualitative terms: Ugwu et al. [2] observed that low-priority traffic suffers from "traffic congestion and frame loss rate are high" under saturation, while Mammeri et al. [3] noted that BE/BK "throughputs are almost zero" when high-priority traffic dominates. However, no formal, quantifiable detection criterion has been established in the literature. We propose the following starvation condition for a low-priority Access Category $AC_i$ (where $i \in \{BE, BK\}$):
 
 $$
 \text{Starvation}(AC_i) \iff \left( \frac{Q_i}{Q_{cap}} > Q_{th} \right) \lor \left( P_{loss,i} > P_{th} \right)
@@ -47,6 +47,8 @@ where:
 - $Q_{th}$: queue occupancy threshold (default 80%)
 - $P_{loss,i}$: packet loss rate of $AC_i$ during the monitoring interval
 - $P_{th}$: packet loss rate threshold (default 10%)
+
+The two indicators are combined with a logical OR because they capture complementary starvation symptoms. Queue occupancy ($Q_i/Q_{cap}$) detects the case where packets accumulate in the buffer faster than they can be transmitted, indicating sustained channel access deprivation. Packet loss rate ($P_{loss,i}$) captures scenarios where starvation manifests through packet drops rather than queue buildup — for instance, when the queue is full and incoming packets are dropped at the entry point, or when packets are discarded after exceeding the MAC-layer retry limit due to repeated collisions with high-priority traffic. Using either indicator alone would miss certain starvation patterns; their combination ensures robust detection across all failure modes.
 
 ### 2.2 Limitations of Static EDCA
 
@@ -89,43 +91,83 @@ These parameters are determined at association time and remain constant througho
 
 ## 3. Proposed Solution: QAD-EDCA
 
-### 3.1 Overview
+### 3.1 Design Objectives
 
-Queue-Aware Dynamic EDCA (QAD-EDCA) operates at the Access Point (AP) as a centralized monitor and controller. The algorithm periodically samples the queue state and loss metrics of each AC and, upon detecting a starvation condition, applies graduated parameter adjustments to rebalance channel access opportunities. Adjusted parameters are disseminated to all associated stations via beacon frames.
+QAD-EDCA aims to address the starvation problem while respecting the following prioritized objectives:
 
-### 3.2 Algorithm Design
+| Priority | Objective | Target Metric |
+|----------|-----------|---------------|
+| 1 | Mitigate starvation of low-priority ACs | AC_BE/AC_BK packet loss rate < 15% (down from > 40%) |
+| 2 | Preserve high-priority QoS guarantees | AC_VO delay < 150 ms, AC_VI delay < 300 ms |
+| 3 | Improve overall fairness | Jain's Fairness Index > 0.8 (up from ~0.4) |
 
-QAD-EDCA employs three complementary adjustment strategies, applied in escalating order of aggressiveness:
+The goal is not to equalize all ACs, but to ensure low-priority traffic can maintain a minimum viable throughput without degrading real-time services.
 
-1. **AIFS Reduction for Low-Priority ACs**: Decrease AIFSN of AC_BE and AC_BK by $\Delta_{AIFS}$, reducing their waiting time before contention.
-2. **CWmin Increase for High-Priority ACs**: Increase CWmin of AC_VO and AC_VI by factor $\alpha_{CW}$, moderating their channel access aggressiveness.
-3. **TXOP Limit Reduction for High-Priority ACs**: Decrease TXOP limit of AC_VO and AC_VI by factor $\beta_{TXOP}$, reducing channel occupation duration.
+### 3.2 Architecture
 
-When starvation is resolved, parameters recover toward defaults using an exponential decay function to prevent oscillation.
+QAD-EDCA operates at the Access Point (AP) as a centralized monitor and controller. The AP is chosen as the control point because:
 
-### 3.3 Mathematical Model
+- It has visibility into all per-AC queues within the BSS.
+- It can disseminate updated EDCA parameters to all associated stations via the EDCA Parameter Set element in beacon frames, requiring no modification to STA implementations.
+- The monitoring interval ($T_{mon} = 100$ ms) is synchronized with the standard beacon interval, introducing no additional overhead.
 
-**Channel access probability estimate**: For a station using EDCA, its transmission probability in any time slot can be approximated as:
+Unlike DRL-based approaches [6][7] that require training phases and significant computational resources, QAD-EDCA is a lightweight rule-based engine with O(1) computational complexity per monitoring cycle — it only reads 4 queue lengths and 4 loss rates, evaluates threshold conditions, and applies deterministic adjustments.
 
-$$
-\tau_i = \frac{2}{CWmin_i + 1}
-$$
+### 3.3 Three-Stage Adjustment Strategy
 
-**Fairness quantification**: Jain's Fairness Index [9] measures resource allocation fairness:
+Upon detecting starvation, QAD-EDCA simultaneously applies three complementary strategies that target different phases of the EDCA channel access process:
 
-$$
-J(\mathbf{x}) = \frac{\left(\sum_{i=1}^{n} x_i\right)^2}{n \sum_{i=1}^{n} x_i^2}, \quad J \in \left[\frac{1}{n}, 1\right]
-$$
+#### Strategy 1: AIFSN Reduction for Low-Priority ACs
 
-where $x_i$ is the normalized throughput of the $i$-th AC. $J = 1$ indicates perfect fairness.
+$$AIFSN_i = \max(AIFSN_i - \Delta_{AIFS},\ 2), \quad i \in \{BE, BK\}$$
 
-**Recovery function**: After starvation resolution, each parameter $P$ recovers via exponential decay:
+AIFSN determines how many time slots a STA must wait after a SIFS before entering contention. Reducing AIFSN for BE/BK shortens their pre-contention wait, giving them earlier access to the channel. The floor value of 2 matches AC_VO/AC_VI defaults, ensuring low-priority ACs never become more aggressive than high-priority ones. This is the most effective single lever, as confirmed by Ugwu et al. [2]: "AIFS has more influence on the QoS of EDCA protocol" than CW.
 
-$$
-P(t+1) = P(t) + \gamma \cdot \left(P_{default} - P(t)\right), \quad 0 < \gamma < 1
-$$
+#### Strategy 2: CWmin Increase for High-Priority ACs
 
-### 3.4 Pseudo-code
+$$CWmin_i = \min(CWmin_i \times \alpha_{CW},\ CWmin_{default,BE}), \quad i \in \{VO, VI\}$$
+
+CWmin determines the backoff window size. Increasing CWmin for VO/VI widens their backoff range, moderating their channel access aggressiveness. The ceiling is set to $CWmin_{default,BE} = 15$, ensuring high-priority ACs always retain a structural advantage over low-priority ones. The effect on channel access probability is:
+
+$$\tau_i = \frac{2}{CWmin_i + 1}$$
+
+As CWmin increases from 3 to 15, the per-slot transmission probability drops from 50% to 12.5%, significantly reducing high-priority dominance.
+
+#### Strategy 3: TXOP Limit Reduction for High-Priority ACs
+
+$$TXOP_i = \max(TXOP_i \times \beta_{TXOP},\ TXOP_{min}), \quad i \in \{VO, VI\}$$
+
+TXOP limit determines how long a STA can occupy the channel after winning contention. Reducing TXOP forces high-priority STAs to release the channel sooner, creating more access opportunities for low-priority traffic. The floor value $TXOP_{min}$ ensures at least one frame can be transmitted per access.
+
+#### Why All Three Simultaneously
+
+The three strategies are applied concurrently rather than sequentially because they operate on different phases of channel access: AIFSN affects *when contention begins*, CWmin affects *how long the backoff lasts*, and TXOP affects *how long the channel is occupied after winning*. Simultaneous adjustment across all three dimensions provides the fastest response to starvation conditions.
+
+### 3.4 Recovery Mechanism
+
+When the starvation condition is no longer satisfied, parameters recover toward their default values via exponential decay:
+
+$$P(t+1) = P(t) + \gamma \cdot \left(P_{default} - P(t)\right), \quad 0 < \gamma < 1$$
+
+With $\gamma = 0.3$, a parameter at its adjustment limit returns to approximately 83% of its default value within 5 monitoring cycles (~500 ms). Gradual recovery is essential to prevent oscillation: if parameters were instantly restored, starvation would likely reoccur immediately, triggering another adjustment cycle — a ping-pong effect that degrades both fairness and QoS stability.
+
+### 3.5 QoS Constraint Verification (Safety Valve)
+
+After applying adjustments, the algorithm verifies that high-priority QoS guarantees remain intact:
+
+$$\text{If } d_{VO} > 150\text{ ms} \lor d_{VI} > 300\text{ ms}: \quad P_{adjusted} \leftarrow \frac{P_{adjusted} + P_{default}}{2}$$
+
+This partial revert (midpoint between current adjustment and default) serves as a safety valve, ensuring that **Objective 2 (QoS preservation) always takes precedence over Objective 1 (starvation mitigation)**. The bounded adjustment ranges (AIFSN floor at 2, CWmin ceiling at $CWmin_{default,BE}$, TXOP floor at $TXOP_{min}$) provide additional structural safeguards.
+
+### 3.6 Fairness Quantification
+
+Overall fairness across ACs is measured using Jain's Fairness Index [9]:
+
+$$J(\mathbf{x}) = \frac{\left(\sum_{i=1}^{n} x_i\right)^2}{n \sum_{i=1}^{n} x_i^2}, \quad J \in \left[\frac{1}{n}, 1\right]$$
+
+where $x_i$ is the normalized throughput of the $i$-th AC. $J = 1$ indicates perfect fairness. Under standard EDCA with high-priority dominance, $J$ drops to ~0.4; QAD-EDCA targets $J > 0.8$.
+
+### 3.7 Pseudo-code
 
 ```
 Algorithm: QAD-EDCA Dynamic Parameter Adjustment
@@ -134,12 +176,12 @@ Input: Monitoring interval T_mon, thresholds Q_th, P_th
        Recovery factor: gamma (0 < gamma < 1)
 
 Every T_mon seconds at the AP:
-  1. For each AC in {BE, BK}:
-       Measure Q_i = queue occupancy ratio of AC_i
-       Measure P_loss_i = packet loss rate of AC_i
+  1. Monitor: For each AC in {BE, BK}:
+       Read Q_i = queue occupancy ratio of AC_i
+       Read P_loss_i = packet loss rate of AC_i
 
-  2. If Starvation(AC_BE) OR Starvation(AC_BK):
-       // Starvation detected -- apply adjustments
+  2. Detect: If Starvation(AC_BE) OR Starvation(AC_BK):
+       // Starvation detected -- apply three-stage adjustment
        a. AIFSN_BE = max(AIFSN_BE - delta_AIFS, 2)
           AIFSN_BK = max(AIFSN_BK - delta_AIFS, 2)
        b. CWmin_VO = min(CWmin_VO * alpha_CW, CWmin_default_BE)
@@ -147,29 +189,27 @@ Every T_mon seconds at the AP:
        c. TXOP_VO = max(TXOP_VO * beta_TXOP, TXOP_min)
           TXOP_VI = max(TXOP_VI * beta_TXOP, TXOP_min)
 
-  3. Else:
-       // No starvation -- recover toward defaults
+  3. Recover: Else (no starvation):
        For each parameter P in {AIFSN, CWmin, TXOP}:
          P(t+1) = P(t) + gamma * (P_default - P(t))
 
-  4. Broadcast updated parameters to all STAs via beacon frame
+  4. Broadcast: Disseminate updated parameters via beacon frame
 
-  5. Verify QoS constraints:
-       If delay_VO > 150 ms OR delay_VI > 300 ms:
-         Partially revert adjustments (reduce delta by 50%)
+  5. Verify: If delay_VO > 150 ms OR delay_VI > 300 ms:
+       Partially revert: P = (P_adjusted + P_default) / 2
 ```
 
-### 3.5 Key Parameters
+### 3.8 Key Parameters
 
 | Parameter | Symbol | Default | Description |
 |-----------|--------|---------|-------------|
-| Monitoring interval | $T_{mon}$ | 100 ms | How often the AP checks queue states |
+| Monitoring interval | $T_{mon}$ | 100 ms | Synchronized with beacon interval |
 | Queue threshold | $Q_{th}$ | 80% | Queue occupancy ratio triggering detection |
 | Loss rate threshold | $P_{th}$ | 10% | Packet loss rate triggering detection |
-| AIFS adjustment step | $\Delta_{AIFS}$ | 1 | AIFSN reduction per cycle |
-| CW scaling factor | $\alpha_{CW}$ | 2.0 | CWmin increase multiplier |
-| TXOP scaling factor | $\beta_{TXOP}$ | 0.75 | TXOP reduction multiplier |
-| Recovery factor | $\gamma$ | 0.3 | Exponential decay toward defaults |
+| AIFS adjustment step | $\Delta_{AIFS}$ | 1 | AIFSN reduction per cycle; floor = 2 |
+| CW scaling factor | $\alpha_{CW}$ | 2.0 | CWmin multiplier; ceiling = $CWmin_{default,BE}$ |
+| TXOP scaling factor | $\beta_{TXOP}$ | 0.75 | TXOP multiplier; floor = $TXOP_{min}$ |
+| Recovery factor | $\gamma$ | 0.3 | Exponential decay rate; ~83% recovery in 5 cycles |
 
 ---
 
