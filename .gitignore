@@ -8,3 +8,4 @@ results/*.sca
 results/*.vec
 results/*.sqlite
 figures/
+.dev-guide.md
