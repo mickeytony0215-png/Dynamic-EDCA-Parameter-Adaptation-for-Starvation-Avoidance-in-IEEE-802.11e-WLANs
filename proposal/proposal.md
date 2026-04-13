@@ -4,8 +4,8 @@
 
 | Name | Student ID | Responsibilities |
 |------|-----------|-----------------|
-| (To be filled) | | |
-| (To be filled) | | |
+| all members) | | |
+| all members) | | |
 
 ---
 
@@ -86,6 +86,8 @@ These parameters are determined at association time and remain constant througho
 | Application-layer optimization | Li et al. [8] | Operates at application layer; does not directly adjust MAC-layer EDCA parameters |
 
 **Research Gap**: There is a lack of lightweight, MAC-layer mechanisms that can sense queue states in real-time and dynamically adjust EDCA parameters for starvation avoidance.
+
+Existing dynamic EDCA approaches typically target different network types (e.g., vehicular or IoT), adjust only one or two parameters (usually CW alone), or lack a formal starvation detection criterion. QAD-EDCA addresses these gaps by combining a dual-indicator starvation detection formula (queue occupancy and packet loss rate) with simultaneous three-dimensional parameter adjustment (AIFSN, CWmin, TXOP), complemented by an exponential recovery mechanism and a QoS safety valve, forming an integrated closed-loop starvation avoidance system for infrastructure WLANs.
 
 ---
 
@@ -304,10 +306,10 @@ Presentation Prep                                                ████
 
 | Role | Member | Tasks |
 |------|--------|-------|
-| Algorithm Design & Implementation | (To be filled) | QAD-EDCA algorithm design; C++ implementation in OMNeT++/INET |
-| Simulation & Experimentation | (To be filled) | Network topology setup; Traffic configuration; Running experiments |
-| Analysis & Visualization | (To be filled) | Result parsing; Statistical analysis; Figure generation |
-| Report & Literature Review | (To be filled) | Literature survey; Proposal and final report writing |
+| Algorithm Design & Implementation | all members) | QAD-EDCA algorithm design; C++ implementation in OMNeT++/INET |
+| Simulation & Experimentation | all members) | Network topology setup; Traffic configuration; Running experiments |
+| Analysis & Visualization | all members) | Result parsing; Statistical analysis; Figure generation |
+| Report & Literature Review | all members) | Literature survey; Proposal and final report writing |
 
 *Note: Team members may share responsibilities across roles.*
 
