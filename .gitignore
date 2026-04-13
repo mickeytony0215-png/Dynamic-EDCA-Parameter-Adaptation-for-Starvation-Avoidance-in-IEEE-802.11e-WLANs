@@ -9,3 +9,9 @@ results/*.vec
 results/*.sqlite
 figures/
 .dev-guide.md
+proposal/*.tex
+proposal/*.aux
+proposal/*.log
+proposal/*.out
+proposal/*.pdf
+proposal/*.synctex.gz
