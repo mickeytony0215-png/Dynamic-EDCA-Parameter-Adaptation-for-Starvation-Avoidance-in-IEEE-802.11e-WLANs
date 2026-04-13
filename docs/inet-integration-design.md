@@ -1,7 +1,58 @@
 # QAD-EDCA 與 INET 4.5 整合實作方案
 
 > 產出日期：2026-04-09
-> 目的：為 `QadEdcaManager.cc` 中 4 個 TODO helper functions 提供具體實作方案
+> 最後更新：2026-04-13
+> 目的：為 QAD-EDCA 演算法在 OMNeT++/INET 4.5 中的完整實作提供技術規格
+
+---
+
+## 0. 設計目標與約束（依據 proposal §2.4 / §3.1）
+
+### 目標優先順序
+
+| 優先順序 | 目標 | 量化指標 |
+|---------|------|--------|
+| 1 | 緩解低優先權 AC 飢餓 | AC_BE/AC_BK 封包遺失率 < 15% |
+| 2 | 保障高優先權 QoS | AC_VO 延遲 < 150 ms、AC_VI 延遲 < 300 ms |
+| 3 | 提升整體公平性 | Jain Index > 0.8 |
+
+### 設計約束
+
+- **不修改 `~/simulation/inet4.5/` 的任何檔案**
+- 所有編譯產出在專案的 `out/` 目錄
+- 運算複雜度 O(1) / 監控週期
+- 透過子類化（而非 friend class）存取 INET 的 protected 成員
+
+### EDCA 標準參數（IEEE 802.11-2020 Table 9-155，OFDM PHY Clause 17–21）
+
+| AC | CWmin | CWmax | AIFSN | TXOP limit |
+|----|-------|-------|-------|------------|
+| AC_BK | 15 | 1023 | 7 | 2.528 ms |
+| AC_BE | 15 | 1023 | 3 | 2.528 ms |
+| AC_VI | 7 | 15 | 2 | 4.096 ms |
+| AC_VO | 3 | 7 | 2 | 2.080 ms |
+
+**注意**：INET 4.5 的 `TxopProcedure.cc` 使用舊值（VO=1.504ms, VI=3.008ms），需在 `QadTxopProcedure` 的 `initialize()` 中以標準值覆蓋。
+
+### QAD-EDCA 演算法參數
+
+| 參數 | 符號 | 預設值 | 調整範圍 |
+|------|------|--------|---------|
+| 監控間隔 | T_mon | 100 ms | 與 beacon 間隔同步 |
+| 佇列閾值 | Q_th | 80% | — |
+| 遺失率閾值 | P_th | 10% | — |
+| AIFS 調整步長 | Δ_AIFS | 1 | 下界 = 2（不低於 VO/VI 預設） |
+| CW 縮放因子 | α_CW | 2.0 | 上界 = CWmin_default_BE (15) |
+| TXOP 縮放因子 | β_TXOP | 0.75 | 下界 = TXOP_min |
+| 恢復因子 | γ | 0.3 | ~83% 恢復 in 5 cycles |
+
+### 飢餓偵測公式
+
+$$Starvation(AC_i) \iff (Q_i/Q_{cap} > Q_{th}) \lor (P_{loss,i} > P_{th}), \quad i \in \{BE, BK\}$$
+
+### 安全閥
+
+$$\text{若 } d_{VO} > 150\text{ms} \lor d_{VI} > 300\text{ms}: \quad P_{adjusted} \leftarrow \frac{P_{adjusted} + P_{default}}{2}$$
 
 ---
 
@@ -56,16 +107,13 @@ submodules:
 - 與 `~/simulation/inet4.5/` 完全解耦
 - 透過 `getModuleByPath()` 存取 AP 內部模組
 
-**缺點**：
-- 需要透過較長的模組路徑存取（但 OMNeT++ 完全支援）
-
 ---
 
 ## 3. 四個 TODO 函數的實作方案
 
 ### 3.1 取得 Edcaf 模組的共用邏輯
 
-新增一個 private helper 在 `QadEdcaManager` 中，在 `initialize()` 時快取指標：
+新增 private helper 在 `QadEdcaManager` 中，在 `initialize()` 時快取指標：
 
 ```cpp
 // 新增成員變數
@@ -104,7 +152,7 @@ int QadEdcaManager::getQueueLength(AccessCategory ac) {
 }
 ```
 
-同時修改 `detectStarvation()` 中的 `queueCapacity`：
+同時修改 `detectStarvation()`：
 
 ```cpp
 bool QadEdcaManager::detectStarvation() {
@@ -123,9 +171,7 @@ bool QadEdcaManager::detectStarvation() {
 
 ### 3.3 `getPacketLossRate(AccessCategory ac)` — 取得封包遺失率
 
-INET 的 `Edcaf` 沒有直接提供 loss rate API。有兩個可行方案：
-
-#### 方案 A：監聽 `packetDropped` signal（推薦）
+採用方案 A：監聽 `packetDropped` signal。
 
 `Hcf` 模組會發出 `packetDroppedSignal`（定義在 `inet/common/Simsignals.h`），每次有封包被丟棄（佇列溢出、重傳超限）都會觸發。
 
@@ -159,12 +205,6 @@ double QadEdcaManager::getPacketLossRate(AccessCategory ac) {
 }
 ```
 
-#### 方案 B：讀取統計量（簡易但精度較低）
-
-直接從 `edcaf` 的 recorded statistics 讀取 `packetSentToPeer:count`，與自行維護的入隊計數比較。此方案較不精確，不推薦。
-
-**結論：採用方案 A。**
-
 ### 3.4 `getAverageDelay(AccessCategory ac)` — 取得平均延遲
 
 INET 沒有直接在 MAC 層提供 per-AC delay 統計。需要自行追蹤：
@@ -190,70 +230,98 @@ double QadEdcaManager::getAverageDelay(AccessCategory ac) {
 
 ### 3.5 `applyParameters()` — 動態修改 EDCA 參數
 
-這是最關鍵的部分。INET 的 `Edcaf` 在 `calculateTimingParameters()` 中從 `par()` 讀取 `cwMin`、`cwMax`、`aifsn`，且 `cwMin`/`cwMax` 也存為成員變數。
+#### 修改 AIFSN / CWmin / CWmax
 
-#### 修改 cwMin / cwMax
-
-`Edcaf` 的 `cwMin`、`cwMax`、`cw` 是 **protected** 成員，無法從外部直接設定。
-
-**方案：透過 NED 參數 + 重新觸發 `calculateTimingParameters()`**
+透過 NED 參數 + 子類化的 `QadEdcaf::recalculate()` 重新觸發 `calculateTimingParameters()`：
 
 ```cpp
 void QadEdcaManager::applyParameters() {
     for (int i = 0; i < 4; i++) {
         cModule *edcafMod = check_and_cast<cModule *>(edcafs[i]);
 
-        // 設定 NED 參數（volatile 可在執行期修改）
         edcafMod->par("cwMin").setIntValue(currentParams[i].cwMin);
         edcafMod->par("cwMax").setIntValue(currentParams[i].cwMax);
         edcafMod->par("aifsn").setIntValue(currentParams[i].aifsn);
 
-        // 重新計算 timing（這會重新讀取 par 值並更新內部成員）
-        edcafs[i]->calculateTimingParameters();
+        // 透過子類化暴露的 public 方法重新計算 timing
+        check_and_cast<QadEdcaf *>(edcafs[i])->recalculate();
     }
 }
 ```
 
-**重要問題**：`calculateTimingParameters()` 是 **protected** 方法。
-
-**解決方案（二選一）**：
-
-| 方案 | 做法 | 影響 |
-|------|------|------|
-| A. 子類化（推薦） | 建立 `QadEdcaf extends Edcaf`，新增 `public recalculate()` 方法呼叫 `calculateTimingParameters()`，在 NED 中以 `QadEdcaf` 取代 `Edcaf` | 需新增一個薄包裝類別，但不修改 INET 原始碼 |
-| B. Friend class | 在 INET 的 `Edcaf.h` 加入 `friend class QadEdcaManager` | 直接修改 INET，不推薦 |
-
-**結論：採用方案 A（子類化）。**
-
 #### 修改 TXOP Limit
 
-`TxopProcedure` 的 `limit` 是 protected 成員，初始化時從 `par("txopLimit")` 讀取。
-
-同樣方案：子類化 `TxopProcedure` 為 `QadTxopProcedure`，新增 public setter：
+透過子類化的 `QadTxopProcedure::setTxopLimit()`：
 
 ```cpp
-class QadTxopProcedure : public TxopProcedure {
-  public:
-    void setTxopLimit(simtime_t newLimit) { limit = newLimit; }
-};
+// 在 applyParameters() 中加入
+for (int i = 0; i < 4; i++) {
+    auto *qadTxop = check_and_cast<QadTxopProcedure *>(txops[i]);
+    qadTxop->setTxopLimit(currentParams[i].txopLimit);
+}
+```
+
+#### 三階段調整的具體邏輯（對應 proposal §3.3）
+
+```cpp
+void QadEdcaManager::applyStarvationMitigation() {
+    // 策略 1: 降低 BE/BK 的 AIFSN（下界 = 2）
+    currentParams[AC_BE].aifsn = std::max(currentParams[AC_BE].aifsn - aifsStep, minAifsn);
+    currentParams[AC_BK].aifsn = std::max(currentParams[AC_BK].aifsn - aifsStep, minAifsn);
+
+    // 策略 2: 增加 VO/VI 的 CWmin（上界 = CWmin_default_BE = 15）
+    int maxCw = defaultParams[AC_BE].cwMin;
+    currentParams[AC_VO].cwMin = std::min((int)(currentParams[AC_VO].cwMin * cwScaleFactor), maxCw);
+    currentParams[AC_VI].cwMin = std::min((int)(currentParams[AC_VI].cwMin * cwScaleFactor), maxCw);
+
+    // 策略 3: 縮減 VO/VI 的 TXOP（下界 = TXOP_min）
+    currentParams[AC_VO].txopLimit = std::max(currentParams[AC_VO].txopLimit * txopScaleFactor, minTxopLimit);
+    currentParams[AC_VI].txopLimit = std::max(currentParams[AC_VI].txopLimit * txopScaleFactor, minTxopLimit);
+}
+```
+
+#### 恢復邏輯（對應 proposal §3.4）
+
+```cpp
+void QadEdcaManager::applyRecovery() {
+    for (int i = 0; i < 4; i++) {
+        // P(t+1) = P(t) + γ * (P_default - P(t))
+        currentParams[i].aifsn += (int)(recoveryFactor * (defaultParams[i].aifsn - currentParams[i].aifsn));
+        currentParams[i].cwMin += (int)(recoveryFactor * (defaultParams[i].cwMin - currentParams[i].cwMin));
+        currentParams[i].txopLimit += (defaultParams[i].txopLimit - currentParams[i].txopLimit) * recoveryFactor;
+    }
+}
+```
+
+#### 安全閥邏輯（對應 proposal §3.5）
+
+```cpp
+void QadEdcaManager::revertPartialAdjustment() {
+    // P_adjusted = (P_adjusted + P_default) / 2
+    for (int ac : {AC_VI, AC_VO}) {
+        currentParams[ac].cwMin = (currentParams[ac].cwMin + defaultParams[ac].cwMin) / 2;
+        currentParams[ac].txopLimit = (currentParams[ac].txopLimit + defaultParams[ac].txopLimit) / 2;
+        currentParams[ac].aifsn = (currentParams[ac].aifsn + defaultParams[ac].aifsn) / 2;
+    }
+}
 ```
 
 ---
 
 ## 4. 需要新增的檔案清單
 
-| 檔案 | 說明 |
-|------|------|
-| `src/QadEdcaf.h` | Edcaf 子類別，暴露 `recalculate()` 方法 |
-| `src/QadEdcaf.cc` | 實作（極簡，僅轉發呼叫） |
-| `src/QadEdcaf.ned` | NED 定義，extends Edcaf |
-| `src/QadTxopProcedure.h` | TxopProcedure 子類別，新增 `setTxopLimit()` |
-| `src/QadTxopProcedure.cc` | 實作（極簡） |
-| `src/QadTxopProcedure.ned` | NED 定義，extends TxopProcedure |
-| `src/QadEdcaManager.ned`（已存在） | 需更新，新增 `apModule` 參數 |
-| `src/QadEdcaManager.h`（已存在） | 需更新，新增快取指標和 signal 處理 |
-| `src/QadEdcaManager.cc`（已存在） | 需更新，填入 TODO 實作 |
-| `Makefile` | 新建，引用 INET 的 include/lib 路徑 |
+| 檔案 | 說明 | 複雜度 |
+|------|------|--------|
+| `src/QadEdcaf.h` | Edcaf 子類別，暴露 `recalculate()` 方法 | 低（~10 行） |
+| `src/QadEdcaf.cc` | 實作（僅轉發呼叫） | 低（~5 行） |
+| `src/QadEdcaf.ned` | NED 定義，extends Edcaf | 低（~5 行） |
+| `src/QadTxopProcedure.h` | TxopProcedure 子類別，新增 `setTxopLimit()` | 低（~10 行） |
+| `src/QadTxopProcedure.cc` | 實作 + 標準 TXOP 值覆蓋 | 低（~15 行） |
+| `src/QadTxopProcedure.ned` | NED 定義，extends TxopProcedure | 低（~5 行） |
+| `src/QadEdcaManager.ned`（已存在） | 需更新，新增 `apModule` 參數 | 低 |
+| `src/QadEdcaManager.h`（已存在） | 需更新，新增快取指標、signal 處理、計數器 | 中 |
+| `src/QadEdcaManager.cc`（已存在） | 需更新，填入 TODO 實作 | 中 |
+| `Makefile` | 透過 `opp_makemake` 產生 | 低 |
 
 ---
 
@@ -299,12 +367,32 @@ opp_run -m -u Cmdenv -c Baseline_N10 \
 
 ## 6. INI 配置更新
 
-要讓 AP 使用子類化的 `QadEdcaf` 和 `QadTxopProcedure`，在 `omnetpp.ini` 中覆蓋模組類型：
+### Baseline 場景（不啟用 QAD-EDCA）
+
+標準 EDCA 參數，不替換模組類型。用於驗證飢餓現象和作為比較基準。
+
+### QAD-EDCA 場景
+
+要讓 AP 使用子類化的 `QadEdcaf` 和 `QadTxopProcedure`，在 `qad_edca.ini` 中覆蓋模組類型：
 
 ```ini
-# 使用 QAD-EDCA 子類化模組（僅在 qad_edca 場景中）
+# 使用 QAD-EDCA 子類化模組
 *.ap.wlan[*].mac.hcf.edca.edcaf[*].typename = "QadEdcaf"
 *.ap.wlan[*].mac.hcf.edca.edcaf[*].txopProcedure.typename = "QadTxopProcedure"
+```
+
+### TXOP 標準值覆蓋
+
+在 `QadTxopProcedure` 的 `initialize()` 中以 IEEE 802.11-2020 Table 9-155 的值覆蓋 INET 預設值：
+
+```cpp
+void QadTxopProcedure::initialize(int stage) {
+    TxopProcedure::initialize(stage);
+    if (stage == INITSTAGE_LOCAL) {
+        // 覆蓋 INET 的舊值，使用 IEEE 802.11-2020 Table 9-155 標準值
+        // 由 QadEdcaManager 在 INITSTAGE_LINK_LAYER 階段設定正確的 AC-specific 值
+    }
+}
 ```
 
 ---
@@ -336,25 +424,47 @@ opp_run -m -u Cmdenv -c Baseline_N10 \
 │  └──────┘  └──────┘  └──────┘  └──────┘       │
 └─────────────────────────────────────────────────┘
 
-資料流：
-  QadEdcaManager ──(每 T_mon 秒)──→ 讀取 queue/loss/delay
+運作流程（每 T_mon = 100ms）：
+  QadEdcaManager
        │
-       ├─ 偵測到飢餓 → 調整 AIFSN/CWmin/TXOP
+       ├─ 1. 監控：讀取 BE/BK 的 queue 長度 + loss rate
        │
-       └─ 飢餓解除 → 指數衰減恢復預設值
+       ├─ 2. 偵測：評估飢餓條件（Q/Q_cap > Q_th OR P_loss > P_th）
+       │
+       ├─ 3a. 飢餓 → 三階段同步調整
+       │   ├─ AIFSN_BE/BK ↓（下界 2）
+       │   ├─ CWmin_VO/VI ↑（上界 15）
+       │   └─ TXOP_VO/VI ↓（下界 TXOP_min）
+       │
+       ├─ 3b. 正常 → 指數衰減恢復（γ=0.3）
+       │
+       ├─ 4. 廣播：透過 beacon frame 傳播參數
+       │
+       └─ 5. 安全閥：若 VO/VI 延遲超限 → 部分回復 50%
 ```
 
 ---
 
-## 8. 實作優先順序建議
+## 8. 實作優先順序
 
-| 步驟 | 工作 | 預估複雜度 |
-|------|------|-----------|
-| 1 | 建立 `QadEdcaf` 和 `QadTxopProcedure` 子類別 | 低（各約 20 行） |
-| 2 | 建立 Makefile 並確認可編譯空專案 | 低 |
-| 3 | 實作 `getQueueLength()` + 快取指標 | 低 |
-| 4 | 實作 `applyParameters()`（依賴步驟 1） | 中 |
-| 5 | 實作 `getPacketLossRate()`（signal 訂閱） | 中 |
-| 6 | 實作 `getAverageDelay()`（signal 訂閱） | 中 |
-| 7 | 端對端測試：baseline 場景驗證參數不變 | 低 |
-| 8 | 端對端測試：qad_edca 場景驗證動態調整 | 中 |
+| 步驟 | 工作 | 預估複雜度 | 前置依賴 |
+|------|------|-----------|---------|
+| 1 | 建立 `QadEdcaf` 和 `QadTxopProcedure` 子類別 | 低（各約 20 行） | 無 |
+| 2 | 建立 Makefile 並確認可編譯空專案 | 低 | 無 |
+| 3 | 實作 `getQueueLength()` + 快取指標 | 低 | 步驟 1 |
+| 4 | 實作 `applyParameters()`（含三階段調整、恢復、安全閥） | 中 | 步驟 1 |
+| 5 | 實作 `getPacketLossRate()`（signal 訂閱） | 中 | 步驟 2 |
+| 6 | 實作 `getAverageDelay()`（signal 訂閱） | 中 | 步驟 2 |
+| 7 | 端對端測試：baseline 場景驗證參數不變 | 低 | 步驟 1-6 |
+| 8 | 端對端測試：qad_edca 場景驗證動態調整 | 中 | 步驟 7 |
+
+---
+
+## 9. 比較方案的模擬配置
+
+| 方案 | INI 配置 | 說明 |
+|------|---------|------|
+| Standard EDCA | `baseline.ini`（已存在） | 固定預設參數，不替換模組 |
+| Tuned Static EDCA | 新增 `tuned_static.ini` | 基於 [2] 的最佳靜態配置 |
+| PDCF-DRL | 不模擬，引用論文數據 | 作為效能參考上界 |
+| QAD-EDCA | `qad_edca.ini`（已存在） | 啟用 QadEdcaf + QadTxopProcedure |
