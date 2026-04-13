@@ -89,6 +89,38 @@ These parameters are determined at association time and remain constant througho
 
 Existing dynamic EDCA approaches typically target different network types (e.g., vehicular or IoT), adjust only one or two parameters (usually CW alone), or lack a formal starvation detection criterion. QAD-EDCA addresses these gaps by combining a dual-indicator starvation detection formula (queue occupancy and packet loss rate) with simultaneous three-dimensional parameter adjustment (AIFSN, CWmin, TXOP), complemented by an exponential recovery mechanism and a QoS safety valve, forming an integrated closed-loop starvation avoidance system for infrastructure WLANs.
 
+### 2.4 Proposed Approach and Positioning
+
+We propose Queue-Aware Dynamic EDCA (QAD-EDCA), a lightweight rule-based algorithm that fills the gap between static EDCA and computationally expensive DRL-based approaches. The positioning of QAD-EDCA is explicitly **not** to outperform DRL in raw throughput optimization, but to provide a practical, immediately deployable alternative for scenarios where DRL is infeasible or unnecessary.
+
+**Comparison with DRL-based approaches**:
+
+| Aspect | DRL-based (e.g., PDCF-DRL [6]) | QAD-EDCA (Proposed) |
+|--------|-------------------------------|---------------------|
+| Training required | Yes (thousands of episodes) | **No** (zero-shot deployment) |
+| Time to first effective action | Minutes to hours | **100 ms** (first beacon cycle) |
+| Computational complexity | O(DRL inference) per cycle | **O(1)** per cycle |
+| Adaptability to new environments | Requires retraining | Immediately adaptive |
+| Throughput optimization | Higher | Moderate |
+| Hardware requirements | GPU/NPU preferred | Any AP hardware |
+
+DRL approaches such as PDCF-DRL [6] achieve superior throughput optimization by learning optimal contention window policies. However, during the training phase — which may require thousands of exploration episodes — network performance can be worse than standard EDCA due to random exploration. QAD-EDCA produces effective adjustments from the very first monitoring cycle, requiring no training and no specialized hardware.
+
+**Expected contributions**:
+
+1. **Formalized starvation detection criterion**: Prior work describes starvation qualitatively ("throughputs are almost zero" [3], "frame loss rate are high" [2]). We propose the first quantifiable, directly implementable detection formula combining queue occupancy and packet loss rate, with a formal justification for the dual-indicator OR-logic design.
+
+2. **Three-dimensional closed-loop adjustment**: Existing adaptive EDCA schemes typically adjust only CW. QAD-EDCA simultaneously adjusts AIFSN, CWmin, and TXOP — three parameters governing different phases of channel access — with bounded adjustment ranges, exponential recovery, and a QoS safety valve, forming a complete closed-loop control system.
+
+3. **Bridging the gap between static EDCA and DRL**: QAD-EDCA occupies a previously unexplored middle ground: it is adaptive (unlike static EDCA) yet requires no training (unlike DRL). This makes it suitable for resource-constrained APs and latency-sensitive deployments where waiting for DRL convergence is not acceptable.
+
+4. **Complementary to DRL (warm-start capability)**: QAD-EDCA can serve as a transitional mechanism during DRL training — providing immediate starvation relief while a DRL agent trains in the background, then handing off control once the DRL policy converges.
+
+**Expected limitations**:
+
+- QAD-EDCA uses fixed thresholds and scaling factors, which may not be optimal for all network conditions. DRL can discover non-obvious parameter combinations that outperform hand-tuned rules.
+- Under rapidly fluctuating traffic patterns, DRL's continuous policy optimization may respond more precisely than QAD-EDCA's threshold-triggered adjustments.
+
 ---
 
 ## 3. Proposed Solution: QAD-EDCA
