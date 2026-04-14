@@ -1,6 +1,25 @@
 # QAD-EDCA 模擬執行指南
 
-## 前置需求
+## 首次安裝（新電腦）
+
+如果你的電腦還沒有 OMNeT++ 和 INET，只需要執行：
+
+```bash
+git clone https://github.com/mickeytony0215-png/Dynamic-EDCA-Parameter-Adaptation-for-Starvation-Avoidance-in-IEEE-802.11e-WLANs.git
+cd Dynamic-EDCA-Parameter-Adaptation-for-Starvation-Avoidance-in-IEEE-802.11e-WLANs
+chmod +x setup.sh
+./setup.sh
+```
+
+腳本會自動安裝系統依賴、下載 OMNeT++ 6.1 和 INET 4.5、編譯所有東西、並驗證安裝是否成功。預計耗時 30~60 分鐘。
+
+安裝完成後的環境：
+- OMNeT++ 6.1 → `~/simulation/omnetpp-6.1/`
+- INET 4.5 → `~/simulation/inet4.5/`
+
+---
+
+## 前置需求（已安裝的電腦）
 
 - OMNeT++ 6.1（安裝在 `~/simulation/omnetpp-6.1/`）
 - INET 4.5（安裝在 `~/simulation/inet4.5/`）
