@@ -280,8 +280,10 @@ The simulated network consists of a single AP operating in infrastructure BSS mo
 
 1. **Standard EDCA** (Baseline): Fixed default parameters per IEEE 802.11 [1].
 2. **Tuned Static EDCA**: Optimized static AIFSN/CW configuration based on findings of [2], representing the best achievable performance without dynamic adaptation.
-3. **PDCF-DRL (Zuo 2025)**: DRL-based contention window backoff [6].
+3. **PDCF-DRL (Zuo 2025)**: DRL-based contention window backoff [6]. Comparison is based on published results under comparable scenarios, as reproducing the DRL training environment is beyond the scope of this project. DRL results serve as a reference point to illustrate the performance–complexity trade-off.
 4. **QAD-EDCA** (Proposed): Queue-aware dynamic adaptation scheme.
+
+The primary comparison targets are Standard EDCA and Tuned Static EDCA, both simulated under identical conditions. PDCF-DRL is included as a reference upper bound for throughput optimization, not as a direct head-to-head benchmark.
 
 ---
 

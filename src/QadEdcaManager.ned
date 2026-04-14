@@ -10,6 +10,9 @@ package edcafairness.src;
 simple QadEdcaManager
 {
     parameters:
+        // Module path to the AccessPoint
+        string apModule = default("ap");
+
         // Monitoring
         double monitorInterval @unit(s) = default(0.1s);  // How often to check queue states
 

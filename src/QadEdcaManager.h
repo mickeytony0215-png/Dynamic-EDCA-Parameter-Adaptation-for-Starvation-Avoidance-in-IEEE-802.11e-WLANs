@@ -5,27 +5,29 @@
 #ifndef __EDCAFAIRNESS_QADEDCAMANAGER_H
 #define __EDCAFAIRNESS_QADEDCAMANAGER_H
 
+#include <cmath>
 #include <omnetpp.h>
 #include "inet/linklayer/ieee80211/mac/channelaccess/Edcaf.h"
+#include "inet/linklayer/ieee80211/mac/originator/TxopProcedure.h"
 #include "inet/linklayer/ieee80211/mac/common/AccessCategory.h"
+#include "inet/queueing/contract/IPacketQueue.h"
 
 using namespace omnetpp;
 using namespace inet;
 using namespace inet::ieee80211;
 
-/**
- * QAD-EDCA Manager module.
- *
- * Placed inside the AP module. Periodically monitors per-AC queue lengths
- * and packet loss rates. When starvation of low-priority ACs is detected,
- * dynamically adjusts EDCA parameters across all ACs to restore fairness
- * while preserving high-priority QoS guarantees.
- */
-class QadEdcaManager : public cSimpleModule
+class QadEdcaManager : public cSimpleModule, public cListener
 {
   protected:
-    // Self-messages
     cMessage *monitorTimer = nullptr;
+
+    // Cached module pointers
+    Edcaf *edcafs[4] = {nullptr};
+    queueing::IPacketQueue *queues[4] = {nullptr};
+    TxopProcedure *txops[4] = {nullptr};
+    cModule *hcfModule = nullptr;
+    cModule *queueModules[4] = {nullptr};
+    cModule *edcafModules[4] = {nullptr};
 
     // Configuration
     simtime_t monitorInterval;
@@ -40,20 +42,32 @@ class QadEdcaManager : public cSimpleModule
     simtime_t voDelayBound;
     simtime_t viDelayBound;
 
-    // Default EDCA parameters (saved at initialization)
+    // EDCA parameters (integer form, sent to setEdcaParameters)
     struct EdcaParams {
         int cwMin;
         int cwMax;
         int aifsn;
         simtime_t txopLimit;
     };
-    EdcaParams defaultParams[4];  // AC_BK=0, AC_BE=1, AC_VI=2, AC_VO=3
+    EdcaParams defaultParams[4];
     EdcaParams currentParams[4];
+    EdcaParams prevAppliedParams[4];  // [FIX-MEDIUM] track previous to avoid unnecessary apply
 
-    // Monitoring state
-    long prevTxPackets[4] = {0, 0, 0, 0};
-    long prevDropPackets[4] = {0, 0, 0, 0};
+    // [FIX-HIGH] Double accumulators for recovery (avoid integer truncation)
+    struct EdcaParamsDouble {
+        double cwMin;
+        double aifsn;
+    };
+    EdcaParamsDouble smoothParams[4];
+
+    // Per-interval monitoring counters
+    long dropCount[4] = {0, 0, 0, 0};
+    long enqueueCount[4] = {0, 0, 0, 0};
+    simtime_t totalDelay[4] = {SIMTIME_ZERO, SIMTIME_ZERO, SIMTIME_ZERO, SIMTIME_ZERO};
+    long delayCount[4] = {0, 0, 0, 0};
+
     bool starvationActive = false;
+    bool subscribedToSignals = false;  // [FIX-LOW] guard for unsubscribe
 
     // Signals
     simsignal_t starvationDetectedSignal;
@@ -68,7 +82,9 @@ class QadEdcaManager : public cSimpleModule
     virtual void handleMessage(cMessage *msg) override;
     virtual void finish() override;
 
-    // Core algorithm
+    virtual void receiveSignal(cComponent *source, simsignal_t signalID,
+                               cObject *obj, cObject *details) override;
+
     virtual void monitorAndAdjust();
     virtual bool detectStarvation();
     virtual void applyStarvationMitigation();
@@ -76,11 +92,17 @@ class QadEdcaManager : public cSimpleModule
     virtual bool checkQosConstraints();
     virtual void revertPartialAdjustment();
 
-    // Parameter access helpers
     virtual int getQueueLength(AccessCategory ac);
     virtual double getPacketLossRate(AccessCategory ac);
     virtual double getAverageDelay(AccessCategory ac);
     virtual void applyParameters();
+
+    // [FIX-LOW] Explicit reset for all AC counters
+    void resetIntervalCounters();
+    void unsubscribeFromSignals();
+
+    int findAcForQueue(cComponent *source);
+    int findAcForEdcaf(cComponent *source);
 
   public:
     virtual ~QadEdcaManager();
