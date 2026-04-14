@@ -46,7 +46,7 @@ See `HOW_TO_RUN.md` for detailed instructions.
 
 | Weeks | Task |
 |-------|------|
-| 1--2 (Apr 15--28) | ~~Baseline simulation and starvation demonstration~~ ✅ |
-| 3--4 (Apr 29--May 12) | ~~QAD-EDCA implementation~~ ✅ |
+| 1--2 (Apr 15--28) | ~~Baseline simulation and starvation demonstration~~ |
+| 3--4 (Apr 29--May 12) | ~~QAD-EDCA implementation~~  |
 | 5--6 (May 13--26) | Full experiments and data collection |
 | 7--8 (May 27--Jun 10) | Analysis, report, presentation |
