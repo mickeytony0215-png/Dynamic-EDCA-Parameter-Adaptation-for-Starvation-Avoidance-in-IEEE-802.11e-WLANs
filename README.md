@@ -6,34 +6,35 @@ NSYSU Wireless Communications Network — Term Project, Spring 2026.
 ## Quick Start
 
 ```bash
-# 1. Source OMNeT++ environment
+cd ~/wirleess\ communication\ network\ project
+
+# Build (first time only)
 source ~/simulation/omnetpp-6.1/setenv
+opp_makemake -f --deep -e cc -O out -o edcafairness --make-so -X venv -X results -X analysis -X references -X proposal -X docs -I$HOME/simulation/inet4.5/src -L$HOME/simulation/inet4.5/src -lINET -KINET_PROJ=$HOME/simulation/inet4.5
+make -j$(nproc)
 
-# 2. Run baseline QoS showcase to verify setup
-cd ~/simulation/inet4.5/showcases/wireless/qos
-opp_run -m -u Cmdenv -c Qos -n .:../../../src -l ../../../src/INET omnetpp.ini
+# Run (GUI)
+./run.sh Baseline_N10 baseline
+./run.sh QadEdca_N10 qad_edca
 
-# 3. Run project simulations (after building)
-cd simulations/
-opp_run -m -u Cmdenv -c Baseline_N10 omnetpp.ini
-
-# 4. Generate sample figures
-cd ../analysis/
-python plot_figures.py --sample --outdir ../results/figures
+# Run (CLI, for batch)
+./run.sh Baseline_N10 baseline 0 --cli
 ```
+
+See `HOW_TO_RUN.md` for detailed instructions.
 
 ## Structure
 
 | Directory | Contents |
 |-----------|----------|
-| `proposal/` | Project proposal (Markdown) |
+| `src/` | QAD-EDCA C++ modules (QadEdcaManager, QadEdcaf, QadTxopProcedure, QadEdca, QadHcf) |
 | `simulations/` | NED topology and .ini configs |
-| `simulations/scenarios/` | Baseline, QAD-EDCA, and high-load configs |
-| `src/` | QAD-EDCA C++ module (NED + header + implementation) |
+| `simulations/scenarios/` | Baseline, QAD-EDCA, and high-load scenario configs |
 | `analysis/` | Python scripts for parsing results and plotting |
-| `results/` | Simulation output (generated) |
+| `results/` | Simulation output (generated, gitignored) |
+| `proposal/` | Project proposal (Markdown + LaTeX) |
+| `docs/` | Design docs, dev reports, review reports, presentation outlines |
 | `references/` | Reference papers |
-| `docs/` | Final report draft |
 
 ## Environment
 
@@ -45,7 +46,7 @@ python plot_figures.py --sample --outdir ../results/figures
 
 | Weeks | Task |
 |-------|------|
-| 1--2 (Apr 15--28) | Baseline simulation and starvation demonstration |
-| 3--4 (Apr 29--May 12) | QAD-EDCA implementation |
+| 1--2 (Apr 15--28) | ~~Baseline simulation and starvation demonstration~~ ✅ |
+| 3--4 (Apr 29--May 12) | ~~QAD-EDCA implementation~~ ✅ |
 | 5--6 (May 13--26) | Full experiments and data collection |
 | 7--8 (May 27--Jun 10) | Analysis, report, presentation |

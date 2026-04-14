@@ -3,19 +3,26 @@
 //
 
 #include "QadEdcaManager.h"
+#include "QadEdcaf.h"
+#include "QadTxopProcedure.h"
+
 #include "inet/common/ModuleAccess.h"
+#include "inet/common/Simsignals.h"
+#include "inet/common/Simsignals_m.h"
+#include "inet/common/packet/Packet.h"
+#include "inet/linklayer/ieee80211/mac/Ieee80211Frame_m.h"
 
 Define_Module(QadEdcaManager);
 
 QadEdcaManager::~QadEdcaManager()
 {
     cancelAndDelete(monitorTimer);
+    unsubscribeFromSignals();  // [FIX-LOW] ensure cleanup even on abnormal termination
 }
 
 void QadEdcaManager::initialize(int stage)
 {
     if (stage == INITSTAGE_LOCAL) {
-        // Read parameters from NED
         monitorInterval = par("monitorInterval");
         queueThreshold = par("queueThreshold");
         lossThreshold = par("lossThreshold");
@@ -28,34 +35,72 @@ void QadEdcaManager::initialize(int stage)
         voDelayBound = par("voDelayBound");
         viDelayBound = par("viDelayBound");
 
-        // Register signals
         starvationDetectedSignal = registerSignal("starvationDetected");
         adjustedCwMinVoSignal = registerSignal("adjustedCwMinVo");
         adjustedCwMinViSignal = registerSignal("adjustedCwMinVi");
         adjustedAifsnBeSignal = registerSignal("adjustedAifsnBe");
         adjustedAifsnBkSignal = registerSignal("adjustedAifsnBk");
 
-        // Schedule first monitoring event
         monitorTimer = new cMessage("QadEdcaMonitorTimer");
         scheduleAt(simTime() + monitorInterval, monitorTimer);
     }
     else if (stage == INITSTAGE_LINK_LAYER) {
-        // Save default EDCA parameters from the MAC module
-        // These are the standard 802.11e defaults that we'll modify and restore
+        std::string apPath = par("apModule").stdstringValue();
+        cModule *edca = getModuleByPath(
+            (apPath + ".wlan[0].mac.hcf.edca").c_str());
+        if (!edca)
+            throw cRuntimeError("Cannot find EDCA module at path '%s.wlan[0].mac.hcf.edca'",
+                                apPath.c_str());
 
-        // Default parameters per IEEE 802.11e (for 802.11a/g, aCWmin=15, aCWmax=1023)
-        // AC_BK: CWmin=15, CWmax=1023, AIFSN=7
-        defaultParams[0] = {15, 1023, 7, SimTime(0)};
-        // AC_BE: CWmin=15, CWmax=1023, AIFSN=3
-        defaultParams[1] = {15, 1023, 3, SimTime(0)};
-        // AC_VI: CWmin=7, CWmax=15, AIFSN=2, TXOP=3.008ms
-        defaultParams[2] = {7, 15, 2, SimTime(3008, SIMTIME_US)};
-        // AC_VO: CWmin=3, CWmax=7, AIFSN=2, TXOP=1.504ms
-        defaultParams[3] = {3, 7, 2, SimTime(1504, SIMTIME_US)};
+        for (int i = 0; i < 4; i++) {
+            cModule *edcafMod = edca->getSubmodule("edcaf", i);
+            edcafs[i] = check_and_cast<Edcaf *>(edcafMod);
+            queues[i] = edcafs[i]->getPendingQueue();
+            txops[i] = edcafs[i]->getTxopProcedure();
+            edcafModules[i] = edcafMod;
+            queueModules[i] = edcafMod->getSubmodule("pendingQueue");
+        }
 
-        // Initialize current parameters to defaults
+        hcfModule = getModuleByPath(
+            (apPath + ".wlan[0].mac.hcf").c_str());
+
+        // ---- Subscribe to signals ----
+        // [FIX-CRITICAL] Only subscribe packetDroppedSignal on hcf.
+        // Signals propagate UP the hierarchy, so hcf receives drops from
+        // descendant pendingQueues too. No double subscription needed.
+        hcfModule->subscribe(packetDroppedSignal, this);
+
+        // packetPushedInSignal on each pendingQueue (enqueue tracking)
         for (int i = 0; i < 4; i++)
+            queueModules[i]->subscribe(packetPushedInSignal, this);
+
+        // packetSentToPeerSignal on each edcaf (delay tracking)
+        for (int i = 0; i < 4; i++)
+            edcafModules[i]->subscribe(packetSentToPeerSignal, this);
+
+        subscribedToSignals = true;
+
+        // ---- Default parameters (IEEE 802.11-2020 Table 9-155, OFDM PHY) ----
+        defaultParams[AC_BK] = {15, 1023, 7, SimTime(2528, SIMTIME_US)};
+        defaultParams[AC_BE] = {15, 1023, 3, SimTime(2528, SIMTIME_US)};
+        defaultParams[AC_VI] = {7,   15,  2, SimTime(4096, SIMTIME_US)};
+        defaultParams[AC_VO] = {3,    7,  2, SimTime(2080, SIMTIME_US)};
+
+        for (int i = 0; i < 4; i++) {
             currentParams[i] = defaultParams[i];
+            prevAppliedParams[i] = {-1, -1, -1, SIMTIME_ZERO};  // force first apply
+
+            // [FIX-HIGH] Initialize double accumulators
+            smoothParams[i].cwMin = defaultParams[i].cwMin;
+            smoothParams[i].aifsn = defaultParams[i].aifsn;
+        }
+
+        // Set TXOP limits on QadTxopProcedure submodules
+        for (int i = 0; i < 4; i++) {
+            auto *qadTxop = dynamic_cast<QadTxopProcedure *>(txops[i]);
+            if (qadTxop)
+                qadTxop->setTxopLimit(defaultParams[i].txopLimit);
+        }
 
         EV_INFO << "QAD-EDCA Manager initialized. Monitor interval = "
                 << monitorInterval << "s" << endl;
@@ -70,6 +115,84 @@ void QadEdcaManager::handleMessage(cMessage *msg)
     }
 }
 
+// ============================================================
+// Signal reception
+// ============================================================
+
+int QadEdcaManager::findAcForQueue(cComponent *source)
+{
+    for (int i = 0; i < 4; i++)
+        if (source == queueModules[i])
+            return i;
+    return -1;
+}
+
+int QadEdcaManager::findAcForEdcaf(cComponent *source)
+{
+    for (int i = 0; i < 4; i++)
+        if (source == edcafModules[i])
+            return i;
+    return -1;
+}
+
+void QadEdcaManager::receiveSignal(cComponent *source, simsignal_t signalID,
+                                   cObject *obj, cObject *details)
+{
+    if (signalID == packetDroppedSignal) {
+        // [FIX-CRITICAL] All drops arrive via hcf subscription (signal propagation).
+        // Identify AC by checking if source is a known pendingQueue.
+        int ac = findAcForQueue(source);
+        if (ac >= 0) {
+            dropCount[ac]++;
+            return;
+        }
+
+        // Drop emitted by hcf itself (retry limit exceeded)
+        if (source == hcfModule) {
+            auto *dropDetails = dynamic_cast<PacketDropDetails *>(details);
+            if (!dropDetails || dropDetails->getReason() != RETRY_LIMIT_REACHED)
+                return;
+
+            auto *packet = dynamic_cast<inet::Packet *>(obj);
+            if (!packet) return;
+
+            auto header = packet->peekAtFront<Ieee80211DataOrMgmtHeader>();
+            auto dataHeader = dynamicPtrCast<const Ieee80211DataHeader>(header);
+            if (dataHeader) {
+                int tid = dataHeader->getTid();
+                int mappedAc;
+                switch (tid) {
+                    case 1: case 2: mappedAc = AC_BK; break;
+                    case 0: case 3: mappedAc = AC_BE; break;
+                    case 4: case 5: mappedAc = AC_VI; break;
+                    case 6: case 7: mappedAc = AC_VO; break;
+                    default: mappedAc = AC_BE; break;
+                }
+                dropCount[mappedAc]++;
+            }
+        }
+    }
+    else if (signalID == packetPushedInSignal) {
+        int ac = findAcForQueue(source);
+        if (ac >= 0)
+            enqueueCount[ac]++;
+    }
+    else if (signalID == packetSentToPeerSignal) {
+        int ac = findAcForEdcaf(source);
+        if (ac >= 0) {
+            auto *packet = dynamic_cast<inet::Packet *>(obj);
+            if (packet) {
+                totalDelay[ac] += simTime() - packet->getCreationTime();
+                delayCount[ac]++;
+            }
+        }
+    }
+}
+
+// ============================================================
+// Core algorithm
+// ============================================================
+
 void QadEdcaManager::monitorAndAdjust()
 {
     bool starving = detectStarvation();
@@ -82,9 +205,8 @@ void QadEdcaManager::monitorAndAdjust()
         emit(starvationDetectedSignal, true);
         applyStarvationMitigation();
 
-        // Safety check: ensure VO/VI QoS is still met
         if (!checkQosConstraints()) {
-            EV_WARN << "QoS constraints violated, partially reverting adjustments" << endl;
+            EV_WARN << "QoS constraints violated, partially reverting" << endl;
             revertPartialAdjustment();
         }
     }
@@ -97,154 +219,205 @@ void QadEdcaManager::monitorAndAdjust()
         applyRecovery();
     }
 
-    // Apply the adjusted parameters to the MAC modules
     applyParameters();
 
-    // Emit current parameter values for recording
-    emit(adjustedCwMinVoSignal, (long)currentParams[3].cwMin);
-    emit(adjustedCwMinViSignal, (long)currentParams[2].cwMin);
-    emit(adjustedAifsnBeSignal, (long)currentParams[1].aifsn);
-    emit(adjustedAifsnBkSignal, (long)currentParams[0].aifsn);
+    emit(adjustedCwMinVoSignal, (long)currentParams[AC_VO].cwMin);
+    emit(adjustedCwMinViSignal, (long)currentParams[AC_VI].cwMin);
+    emit(adjustedAifsnBeSignal, (long)currentParams[AC_BE].aifsn);
+    emit(adjustedAifsnBkSignal, (long)currentParams[AC_BK].aifsn);
+
+    // [FIX-LOW] Reset ALL interval counters at the end of each cycle
+    resetIntervalCounters();
 }
+
+// ============================================================
+// Starvation detection (proposal §3.1)
+// ============================================================
 
 bool QadEdcaManager::detectStarvation()
 {
-    // Check if BE or BK queues exceed threshold or loss rate is too high
-    int qLenBe = getQueueLength(AC_BE);
-    int qLenBk = getQueueLength(AC_BK);
-    double lossBe = getPacketLossRate(AC_BE);
-    double lossBk = getPacketLossRate(AC_BK);
+    for (int ac : {AC_BE, AC_BK}) {
+        int qLen = queues[ac]->getNumPackets();
+        int qCap = queues[ac]->getMaxNumPackets();
+        if (qCap <= 0) qCap = 100;
 
-    // TODO: Get actual queue capacity from the module to compute ratio
-    int queueCapacity = 100;  // Default PendingQueue capacity in INET
+        // [FIX-LOW] Read loss rate without side-effect reset (reset is done centrally)
+        long total = enqueueCount[ac];
+        double lossRate = (total > 0) ? double(dropCount[ac]) / total : 0.0;
 
-    bool beStarving = (double(qLenBe) / queueCapacity > queueThreshold)
-                      || (lossBe > lossThreshold);
-    bool bkStarving = (double(qLenBk) / queueCapacity > queueThreshold)
-                      || (lossBk > lossThreshold);
-
-    return beStarving || bkStarving;
+        bool starving = (double(qLen) / qCap > queueThreshold)
+                        || (lossRate > lossThreshold);
+        if (starving) return true;
+    }
+    return false;
 }
+
+// ============================================================
+// Three-stage starvation mitigation (proposal §3.3)
+// ============================================================
 
 void QadEdcaManager::applyStarvationMitigation()
 {
     // Strategy 1: Reduce AIFSN for BE and BK
-    currentParams[1].aifsn = std::max(currentParams[1].aifsn - aifsStep, minAifsn);  // AC_BE
-    currentParams[0].aifsn = std::max(currentParams[0].aifsn - aifsStep, minAifsn);  // AC_BK
+    smoothParams[AC_BE].aifsn = std::max(smoothParams[AC_BE].aifsn - aifsStep, (double)minAifsn);
+    smoothParams[AC_BK].aifsn = std::max(smoothParams[AC_BK].aifsn - aifsStep, (double)minAifsn);
+    currentParams[AC_BE].aifsn = (int)std::round(smoothParams[AC_BE].aifsn);
+    currentParams[AC_BK].aifsn = (int)std::round(smoothParams[AC_BK].aifsn);
 
     // Strategy 2: Increase CWmin for VO and VI
-    int maxCwForVo = defaultParams[1].cwMin;  // Cap at BE's default CWmin
-    currentParams[3].cwMin = std::min((int)(currentParams[3].cwMin * cwScaleFactor), maxCwForVo);  // AC_VO
-    currentParams[2].cwMin = std::min((int)(currentParams[2].cwMin * cwScaleFactor), maxCwForVo);  // AC_VI
+    int maxCw = defaultParams[AC_BE].cwMin;
+    smoothParams[AC_VO].cwMin = std::min(smoothParams[AC_VO].cwMin * cwScaleFactor, (double)maxCw);
+    smoothParams[AC_VI].cwMin = std::min(smoothParams[AC_VI].cwMin * cwScaleFactor, (double)maxCw);
+    currentParams[AC_VO].cwMin = (int)std::round(smoothParams[AC_VO].cwMin);
+    currentParams[AC_VI].cwMin = (int)std::round(smoothParams[AC_VI].cwMin);
 
     // Strategy 3: Reduce TXOP limit for VO and VI
-    simtime_t newTxopVo = currentParams[3].txopLimit * txopScaleFactor;
-    simtime_t newTxopVi = currentParams[2].txopLimit * txopScaleFactor;
-    currentParams[3].txopLimit = std::max(newTxopVo, minTxopLimit);  // AC_VO
-    currentParams[2].txopLimit = std::max(newTxopVi, minTxopLimit);  // AC_VI
+    currentParams[AC_VO].txopLimit = std::max(currentParams[AC_VO].txopLimit * txopScaleFactor, minTxopLimit);
+    currentParams[AC_VI].txopLimit = std::max(currentParams[AC_VI].txopLimit * txopScaleFactor, minTxopLimit);
 }
+
+// ============================================================
+// Exponential decay recovery (proposal §3.4)
+// [FIX-HIGH] Use double accumulators to avoid integer truncation
+// ============================================================
 
 void QadEdcaManager::applyRecovery()
 {
-    // Exponential decay toward default values
     for (int i = 0; i < 4; i++) {
-        // Recover AIFSN
-        currentParams[i].aifsn = currentParams[i].aifsn
-            + (int)(recoveryFactor * (defaultParams[i].aifsn - currentParams[i].aifsn));
+        // P(t+1) = P(t) + gamma * (P_default - P(t))  in double space
+        smoothParams[i].aifsn += recoveryFactor
+            * (defaultParams[i].aifsn - smoothParams[i].aifsn);
+        smoothParams[i].cwMin += recoveryFactor
+            * (defaultParams[i].cwMin - smoothParams[i].cwMin);
 
-        // Recover CWmin
-        currentParams[i].cwMin = currentParams[i].cwMin
-            + (int)(recoveryFactor * (defaultParams[i].cwMin - currentParams[i].cwMin));
+        // Round to integer for actual use
+        currentParams[i].aifsn = (int)std::round(smoothParams[i].aifsn);
+        currentParams[i].cwMin = (int)std::round(smoothParams[i].cwMin);
 
-        // Recover TXOP limit
+        // TXOP is already simtime_t (double), no truncation issue
         simtime_t diff = defaultParams[i].txopLimit - currentParams[i].txopLimit;
-        currentParams[i].txopLimit = currentParams[i].txopLimit + diff * recoveryFactor;
+        currentParams[i].txopLimit += diff * recoveryFactor;
     }
 }
 
+// ============================================================
+// QoS constraint check
+// ============================================================
+
 bool QadEdcaManager::checkQosConstraints()
 {
-    double delayVo = getAverageDelay(AC_VO);
-    double delayVi = getAverageDelay(AC_VI);
+    // [FIX-LOW] Pure read, no side-effect reset
+    double delayVo = (delayCount[AC_VO] > 0)
+        ? totalDelay[AC_VO].dbl() / delayCount[AC_VO] : 0.0;
+    double delayVi = (delayCount[AC_VI] > 0)
+        ? totalDelay[AC_VI].dbl() / delayCount[AC_VI] : 0.0;
 
     return (delayVo < voDelayBound.dbl()) && (delayVi < viDelayBound.dbl());
 }
 
+// ============================================================
+// Safety valve: partial revert (proposal §3.5)
+// ============================================================
+
 void QadEdcaManager::revertPartialAdjustment()
 {
-    // Revert halfway toward defaults for high-priority ACs
-    for (int ac : {2, 3}) {  // AC_VI, AC_VO
-        currentParams[ac].cwMin = (currentParams[ac].cwMin + defaultParams[ac].cwMin) / 2;
-        currentParams[ac].txopLimit = (currentParams[ac].txopLimit + defaultParams[ac].txopLimit) / 2;
+    for (int ac : {AC_VI, AC_VO}) {
+        smoothParams[ac].cwMin =
+            (smoothParams[ac].cwMin + defaultParams[ac].cwMin) / 2.0;
+        smoothParams[ac].aifsn =
+            (smoothParams[ac].aifsn + defaultParams[ac].aifsn) / 2.0;
+
+        currentParams[ac].cwMin = (int)std::round(smoothParams[ac].cwMin);
+        currentParams[ac].aifsn = (int)std::round(smoothParams[ac].aifsn);
+        currentParams[ac].txopLimit =
+            (currentParams[ac].txopLimit + defaultParams[ac].txopLimit) / 2;
     }
 }
 
 // ============================================================
-// Helper functions - these need to access INET's internal modules
+// Parameter access helpers
 // ============================================================
 
 int QadEdcaManager::getQueueLength(AccessCategory ac)
 {
-    // TODO: Navigate the module hierarchy to find the Edcaf submodule
-    // for the given AC, then query its pendingQueue length.
-    //
-    // Example path from AP:
-    //   ap.wlan[0].mac.hcf.edca.edcaf[acIndex].pendingQueue.getNumPackets()
-    //
-    // Placeholder implementation:
-    return 0;
+    return queues[ac]->getNumPackets();
 }
 
+// [FIX-LOW] Getters are now pure reads; reset is done by resetIntervalCounters()
 double QadEdcaManager::getPacketLossRate(AccessCategory ac)
 {
-    // TODO: Compute loss rate from packet counters.
-    // Track packets enqueued vs packets successfully transmitted
-    // over the monitoring interval.
-    //
-    // Placeholder implementation:
-    return 0.0;
+    long total = enqueueCount[ac];
+    if (total == 0) return 0.0;
+    return double(dropCount[ac]) / total;
 }
 
 double QadEdcaManager::getAverageDelay(AccessCategory ac)
 {
-    // TODO: Compute average delay from the delay statistics
-    // maintained by the MAC module for each AC.
-    //
-    // Placeholder implementation:
-    return 0.0;
+    if (delayCount[ac] == 0) return 0.0;
+    return totalDelay[ac].dbl() / delayCount[ac];
 }
 
 void QadEdcaManager::applyParameters()
 {
-    // TODO: Navigate to each Edcaf submodule and update:
-    //   - cwMin, cwMax via par() or direct member access
-    //   - AIFSN via par() or recalculating IFS
-    //   - TXOP limit via TxopProcedure par()
-    //
-    // For a real implementation, this requires either:
-    //   1. Modifying INET's Edcaf class to support runtime parameter changes
-    //   2. Using OMNeT++ par().setIntValue() if parameters are volatile
-    //   3. Sending parameter-update messages to the MAC module
-    //
-    // Example approach:
-    //   cModule *hcf = getParentModule()->getSubmodule("wlan", 0)
-    //                     ->getSubmodule("mac")->getSubmodule("hcf");
-    //   cModule *edca = hcf->getSubmodule("edca");
-    //   for (int i = 0; i < 4; i++) {
-    //       cModule *edcaf = edca->getSubmodule("edcaf", i);
-    //       edcaf->par("cwMin") = currentParams[i].cwMin;
-    //       edcaf->par("cwMax") = currentParams[i].cwMax;
-    //       edcaf->par("aifsn") = currentParams[i].aifsn;
-    //   }
+    for (int i = 0; i < 4; i++) {
+        // [FIX-MEDIUM] Only apply when parameters actually changed
+        if (currentParams[i].cwMin == prevAppliedParams[i].cwMin &&
+            currentParams[i].cwMax == prevAppliedParams[i].cwMax &&
+            currentParams[i].aifsn == prevAppliedParams[i].aifsn &&
+            currentParams[i].txopLimit == prevAppliedParams[i].txopLimit)
+            continue;
 
-    EV_DEBUG << "QAD-EDCA parameters applied: "
-             << "VO CWmin=" << currentParams[3].cwMin
-             << " VI CWmin=" << currentParams[2].cwMin
-             << " BE AIFSN=" << currentParams[1].aifsn
-             << " BK AIFSN=" << currentParams[0].aifsn << endl;
+        auto *qadEdcaf = dynamic_cast<QadEdcaf *>(edcafs[i]);
+        if (qadEdcaf)
+            qadEdcaf->setEdcaParameters(
+                currentParams[i].cwMin,
+                currentParams[i].cwMax,
+                currentParams[i].aifsn);
+
+        auto *qadTxop = dynamic_cast<QadTxopProcedure *>(txops[i]);
+        if (qadTxop)
+            qadTxop->setTxopLimit(currentParams[i].txopLimit);
+
+        prevAppliedParams[i] = currentParams[i];
+    }
+}
+
+// ============================================================
+// [FIX-LOW] Centralized counter reset
+// ============================================================
+
+void QadEdcaManager::resetIntervalCounters()
+{
+    for (int i = 0; i < 4; i++) {
+        dropCount[i] = 0;
+        enqueueCount[i] = 0;
+        totalDelay[i] = SIMTIME_ZERO;
+        delayCount[i] = 0;
+    }
+}
+
+// ============================================================
+// Cleanup
+// ============================================================
+
+void QadEdcaManager::unsubscribeFromSignals()
+{
+    if (!subscribedToSignals) return;
+    subscribedToSignals = false;
+
+    if (hcfModule)
+        hcfModule->unsubscribe(packetDroppedSignal, this);
+
+    for (int i = 0; i < 4; i++) {
+        if (queueModules[i])
+            queueModules[i]->unsubscribe(packetPushedInSignal, this);
+        if (edcafModules[i])
+            edcafModules[i]->unsubscribe(packetSentToPeerSignal, this);
+    }
 }
 
 void QadEdcaManager::finish()
 {
-    EV_INFO << "QAD-EDCA Manager finished. Total starvation events recorded." << endl;
+    unsubscribeFromSignals();
+    EV_INFO << "QAD-EDCA Manager finished." << endl;
 }

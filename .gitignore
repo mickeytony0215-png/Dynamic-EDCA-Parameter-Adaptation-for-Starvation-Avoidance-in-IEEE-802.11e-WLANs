@@ -4,9 +4,10 @@ __pycache__/
 *.pyc
 *.o
 *.so
-results/*.sca
-results/*.vec
-results/*.sqlite
+Makefile
+edcafairness
+simulations/results/
+simulations/.qtenvrc
 figures/
 .dev-guide.md
 proposal/*.tex
