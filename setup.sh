@@ -45,8 +45,10 @@ sudo apt-get install -y \
     xdg-utils \
     wget curl git
 # setuptools>=70 移除了 pkg_resources，OMNeT++ 6.1 需要舊版
-python3 -m pip install "setuptools<70" 2>/dev/null || \
-    python3 -m pip install --break-system-packages "setuptools<70" 2>/dev/null || true
+# apt 的 matplotlib 3.5.1 太舊，OMNeT++ 需要 >=3.5.2，用 pip 升級
+PIP_BREAK="--break-system-packages"
+python3 -m pip install $PIP_BREAK "setuptools<70" "matplotlib>=3.5.2,<4.0.0" 2>/dev/null || \
+    python3 -m pip install "setuptools<70" "matplotlib>=3.5.2,<4.0.0" 2>/dev/null || true
 echo "  系統依賴安裝完成。"
 echo ""
 
