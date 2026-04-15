@@ -37,7 +37,7 @@ sudo apt-get install -y \
     build-essential clang lld gdb bison flex perl \
     python3 python3-pip python3-venv \
     python3-setuptools python3-numpy python3-scipy \
-    python3-pandas python3-matplotlib python3-postel \
+    python3-pandas python3-matplotlib \
     libxml2-dev zlib1g-dev \
     qt6-base-dev libqt6opengl6-dev \
     libopenscenegraph-dev \
