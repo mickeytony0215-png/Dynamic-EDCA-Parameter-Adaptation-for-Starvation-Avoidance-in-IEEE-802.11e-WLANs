@@ -37,7 +37,7 @@ sudo apt-get install -y \
     python3 python3-pip python3-venv \
     libxml2-dev zlib1g-dev \
     qt6-base-dev libqt6opengl6-dev \
-    libopenscenegraph-dev openscenegraph-plugin-osgearth libosgearth-dev \
+    libopenscenegraph-dev \
     libwebkit2gtk-4.0-dev \
     xdg-utils \
     wget curl git
