@@ -68,6 +68,7 @@ if [ ! -f "$INSTALL_DIR/$OMNETPP_VER/bin/opp_run" ]; then
     source setenv
     python3 -m venv .venv
     source .venv/bin/activate
+    python3 -m pip install setuptools
     python3 -m pip install -r python/requirements.txt
     ./configure
     make -j$NPROC
