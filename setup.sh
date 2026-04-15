@@ -29,29 +29,24 @@ echo "========================================"
 echo ""
 
 # ============================================================
-# 輔助函數：載入 OMNeT++ 環境（含 Python venv）
-# ============================================================
-load_omnetpp_env() {
-    if [ -d "$INSTALL_DIR/$OMNETPP_VER/.venv" ]; then
-        source "$INSTALL_DIR/$OMNETPP_VER/.venv/bin/activate"
-    fi
-    source "$INSTALL_DIR/$OMNETPP_VER/setenv"
-}
-
-# ============================================================
-# Step 1: 安裝系統依賴
+# Step 1: 安裝系統依賴（含 Python 科學計算套件）
 # ============================================================
 echo "[1/5] 安裝系統依賴套件..."
 sudo apt-get update
 sudo apt-get install -y \
     build-essential clang lld gdb bison flex perl \
-    python3 python3-pip python3-venv python3-setuptools \
+    python3 python3-pip python3-venv \
+    python3-setuptools python3-numpy python3-scipy \
+    python3-pandas python3-matplotlib python3-postel \
     libxml2-dev zlib1g-dev \
     qt6-base-dev libqt6opengl6-dev \
     libopenscenegraph-dev \
     libwebkit2gtk-4.0-dev \
     xdg-utils \
     wget curl git
+# 確保 pip 安裝的 setuptools 也有（某些環境 apt 版不夠）
+python3 -m pip install setuptools 2>/dev/null || \
+    python3 -m pip install --break-system-packages setuptools 2>/dev/null || true
 echo "  系統依賴安裝完成。"
 echo ""
 
@@ -73,28 +68,21 @@ else
     echo "[2/5] OMNeT++ 6.1 已下載，跳過下載。"
 fi
 
-# 2b: 設定 Python 環境
-echo "  設定 Python 虛擬環境..."
-cd "$INSTALL_DIR/$OMNETPP_VER"
-if [ ! -d ".venv" ]; then
-    python3 -m venv .venv
-fi
-source .venv/bin/activate
-pip install --upgrade pip setuptools wheel
-pip install -r python/requirements.txt
-echo "  Python 環境就緒。"
-
-# 2c: 編譯
+# 2b: 編譯（不使用 venv，直接用系統 Python）
 if [ ! -f "$INSTALL_DIR/$OMNETPP_VER/bin/opp_run" ]; then
     echo "  編譯 OMNeT++ 6.1（這需要一些時間）..."
+    cd "$INSTALL_DIR/$OMNETPP_VER"
+    # 如果之前有殘留的 venv，先停用
+    type deactivate &>/dev/null && deactivate || true
     source setenv
     ./configure
     make -j$NPROC
     echo "  OMNeT++ 6.1 編譯完成。"
 else
     echo "  OMNeT++ 6.1 已編譯，跳過編譯。"
-    source setenv
 fi
+# 載入 OMNeT++ 環境
+source "$INSTALL_DIR/$OMNETPP_VER/setenv"
 echo ""
 
 # ============================================================
@@ -104,11 +92,9 @@ echo ""
 if [ ! -d "$INSTALL_DIR/inet4.5" ]; then
     echo "[3/5] 下載 INET 4.5..."
     cd "$INSTALL_DIR"
-    load_omnetpp_env
     wget -c --show-progress -O inet-4.5.4.tgz "$INET_URL"
     echo "  解壓中..."
     tar xzf inet-4.5.4.tgz
-    # 解壓目錄可能是 inet4.5 或 inet-4.5.4
     [ -d "$INET_VER" ] && mv "$INET_VER" inet4.5
     rm -f inet-4.5.4.tgz
 else
@@ -119,7 +105,6 @@ fi
 if [ ! -f "$INSTALL_DIR/inet4.5/src/libINET.so" ]; then
     echo "  編譯 INET 4.5（這需要較長時間）..."
     cd "$INSTALL_DIR/inet4.5"
-    load_omnetpp_env
     source setenv
     make makefiles
     make -j$NPROC
@@ -134,7 +119,7 @@ echo ""
 # ============================================================
 echo "[4/5] 編譯 QAD-EDCA 專案..."
 cd "$PROJECT"
-load_omnetpp_env
+source "$INSTALL_DIR/$OMNETPP_VER/setenv"
 
 opp_makemake -f --deep -e cc -O out -o edcafairness --make-so \
     -X venv -X results -X analysis -X references -X proposal -X docs \
