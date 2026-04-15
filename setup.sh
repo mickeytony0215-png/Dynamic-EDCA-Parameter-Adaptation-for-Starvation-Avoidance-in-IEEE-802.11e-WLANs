@@ -15,7 +15,7 @@ set -e
 INSTALL_DIR="$HOME/simulation"
 OMNETPP_VER="omnetpp-6.1"
 INET_VER="inet-4.5.4"
-OMNETPP_URL="https://github.com/omnetpp/omnetpp/releases/download/omnetpp-6.1/omnetpp-6.1-linux-x86_64.tgz"
+OMNETPP_URL="https://github.com/omnetpp/omnetpp/releases/download/omnetpp-6.1.0/omnetpp-6.1.0-linux-x86_64.tgz"
 INET_URL="https://github.com/inet-framework/inet/releases/download/v4.5.4/inet-4.5.4-src.tgz"
 NPROC=$(nproc)
 
@@ -54,10 +54,12 @@ if [ -d "$INSTALL_DIR/$OMNETPP_VER" ]; then
 else
     echo "[2/5] 下載 OMNeT++ 6.1..."
     cd "$INSTALL_DIR"
-    wget -q --show-progress -O omnetpp-6.1.tgz "$OMNETPP_URL"
+    wget -c --show-progress -O omnetpp-6.1.0.tgz "$OMNETPP_URL"
     echo "  解壓中..."
-    tar xzf omnetpp-6.1.tgz
-    rm omnetpp-6.1.tgz
+    tar xzf omnetpp-6.1.0.tgz
+    # 解壓後目錄可能是 omnetpp-6.1.0，重新命名為 omnetpp-6.1
+    [ -d "omnetpp-6.1.0" ] && mv omnetpp-6.1.0 omnetpp-6.1
+    rm -f omnetpp-6.1.0.tgz
 
     echo "  編譯 OMNeT++ 6.1（這需要一些時間）..."
     cd "$INSTALL_DIR/$OMNETPP_VER"
