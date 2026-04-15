@@ -45,7 +45,7 @@ echo "[1/5] 安裝系統依賴套件..."
 sudo apt-get update
 sudo apt-get install -y \
     build-essential clang lld gdb bison flex perl \
-    python3 python3-pip python3-venv \
+    python3 python3-pip python3-venv python3-setuptools \
     libxml2-dev zlib1g-dev \
     qt6-base-dev libqt6opengl6-dev \
     libopenscenegraph-dev \
