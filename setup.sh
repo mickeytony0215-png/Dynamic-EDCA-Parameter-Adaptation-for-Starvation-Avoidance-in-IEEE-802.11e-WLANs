@@ -64,6 +64,9 @@ else
     echo "  編譯 OMNeT++ 6.1（這需要一些時間）..."
     cd "$INSTALL_DIR/$OMNETPP_VER"
     source setenv
+    python3 -m venv .venv
+    source .venv/bin/activate
+    python3 -m pip install -r python/requirements.txt
     ./configure
     make -j$NPROC
     echo "  OMNeT++ 6.1 編譯完成。"
