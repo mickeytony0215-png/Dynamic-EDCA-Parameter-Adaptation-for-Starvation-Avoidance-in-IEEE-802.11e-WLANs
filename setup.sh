@@ -18,6 +18,7 @@ INET_VER="inet-4.5.4"
 OMNETPP_URL="https://github.com/omnetpp/omnetpp/releases/download/omnetpp-6.1.0/omnetpp-6.1.0-linux-x86_64.tgz"
 INET_URL="https://github.com/inet-framework/inet/releases/download/v4.5.4/inet-4.5.4-src.tgz"
 NPROC=$(nproc)
+PROJECT="$(cd "$(dirname "$0")" && pwd)"
 
 echo "========================================"
 echo " QAD-EDCA 環境安裝腳本"
@@ -26,6 +27,16 @@ echo " 目標目錄：$INSTALL_DIR"
 echo " 編譯使用 $NPROC 核心"
 echo "========================================"
 echo ""
+
+# ============================================================
+# 輔助函數：載入 OMNeT++ 環境（含 Python venv）
+# ============================================================
+load_omnetpp_env() {
+    if [ -d "$INSTALL_DIR/$OMNETPP_VER/.venv" ]; then
+        source "$INSTALL_DIR/$OMNETPP_VER/.venv/bin/activate"
+    fi
+    source "$INSTALL_DIR/$OMNETPP_VER/setenv"
+}
 
 # ============================================================
 # Step 1: 安裝系統依賴
@@ -45,64 +56,76 @@ echo "  系統依賴安裝完成。"
 echo ""
 
 # ============================================================
-# Step 2: 下載並安裝 OMNeT++ 6.1
+# Step 2: 下載並編譯 OMNeT++ 6.1
 # ============================================================
 mkdir -p "$INSTALL_DIR"
 
+# 2a: 下載
 if [ ! -d "$INSTALL_DIR/$OMNETPP_VER" ]; then
     echo "[2/5] 下載 OMNeT++ 6.1..."
     cd "$INSTALL_DIR"
     wget -c --show-progress -O omnetpp-6.1.0.tgz "$OMNETPP_URL"
     echo "  解壓中..."
     tar xzf omnetpp-6.1.0.tgz
-    # 解壓後目錄可能是 omnetpp-6.1.0，重新命名為 omnetpp-6.1
     [ -d "omnetpp-6.1.0" ] && mv omnetpp-6.1.0 omnetpp-6.1
     rm -f omnetpp-6.1.0.tgz
 else
     echo "[2/5] OMNeT++ 6.1 已下載，跳過下載。"
 fi
 
+# 2b: 設定 Python 環境
+echo "  設定 Python 虛擬環境..."
+cd "$INSTALL_DIR/$OMNETPP_VER"
+if [ ! -d ".venv" ]; then
+    python3 -m venv .venv
+fi
+source .venv/bin/activate
+pip install --upgrade pip setuptools wheel
+pip install -r python/requirements.txt
+echo "  Python 環境就緒。"
+
+# 2c: 編譯
 if [ ! -f "$INSTALL_DIR/$OMNETPP_VER/bin/opp_run" ]; then
     echo "  編譯 OMNeT++ 6.1（這需要一些時間）..."
-    cd "$INSTALL_DIR/$OMNETPP_VER"
-    python3 -m venv .venv
-    source .venv/bin/activate
-    python3 -m pip install setuptools
-    python3 -m pip install -r python/requirements.txt
     source setenv
     ./configure
     make -j$NPROC
     echo "  OMNeT++ 6.1 編譯完成。"
 else
     echo "  OMNeT++ 6.1 已編譯，跳過編譯。"
-    source "$INSTALL_DIR/$OMNETPP_VER/setenv"
+    source setenv
 fi
 echo ""
 
 # ============================================================
-# Step 3: 下載並安裝 INET 4.5
+# Step 3: 下載並編譯 INET 4.5
 # ============================================================
-if [ -d "$INSTALL_DIR/inet4.5" ]; then
-    echo "[3/5] INET 4.5 已存在於 $INSTALL_DIR/inet4.5，跳過下載。"
-else
+# 3a: 下載
+if [ ! -d "$INSTALL_DIR/inet4.5" ]; then
     echo "[3/5] 下載 INET 4.5..."
     cd "$INSTALL_DIR"
-
-    # 確保 OMNeT++ 環境已載入
-    source "$INSTALL_DIR/$OMNETPP_VER/setenv"
-
-    wget -q --show-progress -O inet-4.5.4.tgz "$INET_URL"
+    load_omnetpp_env
+    wget -c --show-progress -O inet-4.5.4.tgz "$INET_URL"
     echo "  解壓中..."
     tar xzf inet-4.5.4.tgz
-    mv inet4.5 inet4.5 2>/dev/null || mv $INET_VER inet4.5 2>/dev/null || true
+    # 解壓目錄可能是 inet4.5 或 inet-4.5.4
+    [ -d "$INET_VER" ] && mv "$INET_VER" inet4.5
     rm -f inet-4.5.4.tgz
+else
+    echo "[3/5] INET 4.5 已下載，跳過下載。"
+fi
 
+# 3b: 編譯
+if [ ! -f "$INSTALL_DIR/inet4.5/src/libINET.so" ]; then
     echo "  編譯 INET 4.5（這需要較長時間）..."
     cd "$INSTALL_DIR/inet4.5"
+    load_omnetpp_env
     source setenv
     make makefiles
     make -j$NPROC
     echo "  INET 4.5 編譯完成。"
+else
+    echo "  INET 4.5 已編譯，跳過編譯。"
 fi
 echo ""
 
@@ -110,9 +133,8 @@ echo ""
 # Step 4: 編譯專案
 # ============================================================
 echo "[4/5] 編譯 QAD-EDCA 專案..."
-PROJECT="$(cd "$(dirname "$0")" && pwd)"
 cd "$PROJECT"
-source "$INSTALL_DIR/$OMNETPP_VER/setenv"
+load_omnetpp_env
 
 opp_makemake -f --deep -e cc -O out -o edcafairness --make-so \
     -X venv -X results -X analysis -X references -X proposal -X docs \
