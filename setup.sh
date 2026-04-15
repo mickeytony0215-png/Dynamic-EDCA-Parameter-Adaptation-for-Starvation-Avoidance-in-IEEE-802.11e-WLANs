@@ -44,9 +44,9 @@ sudo apt-get install -y \
     libwebkit2gtk-4.0-dev \
     xdg-utils \
     wget curl git
-# 確保 pip 安裝的 setuptools 也有（某些環境 apt 版不夠）
-python3 -m pip install setuptools 2>/dev/null || \
-    python3 -m pip install --break-system-packages setuptools 2>/dev/null || true
+# setuptools>=70 移除了 pkg_resources，OMNeT++ 6.1 需要舊版
+python3 -m pip install "setuptools<70" 2>/dev/null || \
+    python3 -m pip install --break-system-packages "setuptools<70" 2>/dev/null || true
 echo "  系統依賴安裝完成。"
 echo ""
 
