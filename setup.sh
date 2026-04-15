@@ -36,7 +36,7 @@ sudo apt-get install -y \
     build-essential clang lld gdb bison flex perl \
     python3 python3-pip python3-venv \
     libxml2-dev zlib1g-dev \
-    qt6-base-dev libqt6opengl6-dev \
+    qtbase5-dev libqt5opengl5-dev qtchooser \
     libopenscenegraph-dev \
     libwebkit2gtk-4.0-dev \
     xdg-utils \
