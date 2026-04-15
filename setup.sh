@@ -49,9 +49,7 @@ echo ""
 # ============================================================
 mkdir -p "$INSTALL_DIR"
 
-if [ -d "$INSTALL_DIR/$OMNETPP_VER" ]; then
-    echo "[2/5] OMNeT++ 6.1 已存在於 $INSTALL_DIR/$OMNETPP_VER，跳過下載。"
-else
+if [ ! -d "$INSTALL_DIR/$OMNETPP_VER" ]; then
     echo "[2/5] 下載 OMNeT++ 6.1..."
     cd "$INSTALL_DIR"
     wget -c --show-progress -O omnetpp-6.1.0.tgz "$OMNETPP_URL"
@@ -60,7 +58,11 @@ else
     # 解壓後目錄可能是 omnetpp-6.1.0，重新命名為 omnetpp-6.1
     [ -d "omnetpp-6.1.0" ] && mv omnetpp-6.1.0 omnetpp-6.1
     rm -f omnetpp-6.1.0.tgz
+else
+    echo "[2/5] OMNeT++ 6.1 已下載，跳過下載。"
+fi
 
+if [ ! -f "$INSTALL_DIR/$OMNETPP_VER/bin/opp_run" ]; then
     echo "  編譯 OMNeT++ 6.1（這需要一些時間）..."
     cd "$INSTALL_DIR/$OMNETPP_VER"
     source setenv
@@ -70,6 +72,9 @@ else
     ./configure
     make -j$NPROC
     echo "  OMNeT++ 6.1 編譯完成。"
+else
+    echo "  OMNeT++ 6.1 已編譯，跳過編譯。"
+    source "$INSTALL_DIR/$OMNETPP_VER/setenv"
 fi
 echo ""
 
