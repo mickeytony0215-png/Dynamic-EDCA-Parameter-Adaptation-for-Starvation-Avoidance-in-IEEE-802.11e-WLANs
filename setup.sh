@@ -36,19 +36,27 @@ sudo apt-get update
 sudo apt-get install -y \
     build-essential clang lld gdb bison flex perl \
     python3 python3-pip python3-venv \
-    python3-setuptools python3-numpy python3-scipy \
-    python3-pandas python3-matplotlib \
     libxml2-dev zlib1g-dev \
     qt6-base-dev libqt6opengl6-dev \
     libopenscenegraph-dev \
     libwebkit2gtk-4.0-dev \
     xdg-utils \
     wget curl git
-# setuptools>=70 移除了 pkg_resources，OMNeT++ 6.1 需要舊版
-# apt 的 matplotlib 3.5.1 太舊，OMNeT++ 需要 >=3.5.2，用 pip 升級
-PIP_BREAK="--break-system-packages"
-python3 -m pip install $PIP_BREAK "setuptools<70" "matplotlib>=3.5.2,<4.0.0" 2>/dev/null || \
-    python3 -m pip install "setuptools<70" "matplotlib>=3.5.2,<4.0.0" 2>/dev/null || true
+# Python 科學套件全部用 pip 安裝，避免 apt/pip 版本互相衝突
+# OMNeT++ 6.1 要求 setuptools 有 pkg_resources（setuptools<70）且 numpy<2
+python3 -m pip install --break-system-packages \
+    "setuptools>=63.0.0,<70" \
+    "matplotlib>=3.5.2,<4.0.0" \
+    "numpy>=1.18.0,<2.0.0" \
+    "pandas>=1.0.0,<3.0.0" \
+    "scipy>=1.0.0,<2.0.0" \
+    2>/dev/null || \
+python3 -m pip install \
+    "setuptools>=63.0.0,<70" \
+    "matplotlib>=3.5.2,<4.0.0" \
+    "numpy>=1.18.0,<2.0.0" \
+    "pandas>=1.0.0,<3.0.0" \
+    "scipy>=1.0.0,<2.0.0"
 echo "  系統依賴安裝完成。"
 echo ""
 
