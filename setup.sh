@@ -14,7 +14,6 @@ set -e
 
 INSTALL_DIR="$HOME/simulation"
 OMNETPP_VER="omnetpp-6.1"
-INET_VER="inet-4.5.4"
 OMNETPP_URL="https://github.com/omnetpp/omnetpp/releases/download/omnetpp-6.1.0/omnetpp-6.1.0-linux-x86_64.tgz"
 INET_URL="https://github.com/inet-framework/inet/releases/download/v4.5.4/inet-4.5.4-src.tgz"
 NPROC=$(nproc)
@@ -29,7 +28,7 @@ echo "========================================"
 echo ""
 
 # ============================================================
-# Step 1: 安裝系統依賴（含 Python 科學計算套件）
+# Step 1: 安裝系統依賴
 # ============================================================
 echo "[1/5] 安裝系統依賴套件..."
 sudo apt-get update
@@ -42,21 +41,6 @@ sudo apt-get install -y \
     libwebkit2gtk-4.0-dev \
     xdg-utils \
     wget curl git
-# Python 科學套件全部用 pip 安裝，避免 apt/pip 版本互相衝突
-# OMNeT++ 6.1 要求 setuptools 有 pkg_resources（setuptools<70）且 numpy<2
-python3 -m pip install --break-system-packages \
-    "setuptools>=63.0.0,<70" \
-    "matplotlib>=3.5.2,<4.0.0" \
-    "numpy>=1.18.0,<2.0.0" \
-    "pandas>=1.0.0,<3.0.0" \
-    "scipy>=1.0.0,<2.0.0" \
-    2>/dev/null || \
-python3 -m pip install \
-    "setuptools>=63.0.0,<70" \
-    "matplotlib>=3.5.2,<4.0.0" \
-    "numpy>=1.18.0,<2.0.0" \
-    "pandas>=1.0.0,<3.0.0" \
-    "scipy>=1.0.0,<2.0.0"
 echo "  系統依賴安裝完成。"
 echo ""
 
@@ -78,12 +62,25 @@ else
     echo "[2/5] OMNeT++ 6.1 已下載，跳過下載。"
 fi
 
-# 2b: 編譯（不使用 venv，直接用系統 Python）
+# 2b: 建立 Python venv 並安裝依賴
+#     OMNeT++ 的 setenv 腳本會自動偵測並啟動 .venv
+#     setuptools 必須 <70（70+ 移除了 pkg_resources）
+echo "  設定 Python 虛擬環境..."
+cd "$INSTALL_DIR/$OMNETPP_VER"
+if [ ! -d ".venv" ]; then
+    python3 -m venv .venv
+fi
+source .venv/bin/activate
+pip install --upgrade pip
+pip install "setuptools>=63.0.0,<70"
+pip install -r python/requirements.txt
+deactivate
+echo "  Python 環境就緒。"
+
+# 2c: 編譯
+#     source setenv 會自動啟動 .venv 並設定 PATH
 if [ ! -f "$INSTALL_DIR/$OMNETPP_VER/bin/opp_run" ]; then
     echo "  編譯 OMNeT++ 6.1（這需要一些時間）..."
-    cd "$INSTALL_DIR/$OMNETPP_VER"
-    # 如果之前有殘留的 venv，先停用
-    type deactivate &>/dev/null && deactivate || true
     source setenv
     ./configure
     make -j$NPROC
@@ -91,7 +88,7 @@ if [ ! -f "$INSTALL_DIR/$OMNETPP_VER/bin/opp_run" ]; then
 else
     echo "  OMNeT++ 6.1 已編譯，跳過編譯。"
 fi
-# 載入 OMNeT++ 環境
+# 確保環境已載入（setenv 會自動啟動 .venv）
 source "$INSTALL_DIR/$OMNETPP_VER/setenv"
 echo ""
 
@@ -105,7 +102,7 @@ if [ ! -d "$INSTALL_DIR/inet4.5" ]; then
     wget -c --show-progress -O inet-4.5.4.tgz "$INET_URL"
     echo "  解壓中..."
     tar xzf inet-4.5.4.tgz
-    [ -d "$INET_VER" ] && mv "$INET_VER" inet4.5
+    [ -d "inet-4.5.4" ] && mv inet-4.5.4 inet4.5
     rm -f inet-4.5.4.tgz
 else
     echo "[3/5] INET 4.5 已下載，跳過下載。"
