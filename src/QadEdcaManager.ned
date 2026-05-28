@@ -27,12 +27,22 @@ simple QadEdcaManager
         double recoveryFactor = default(0.3);    // Exponential recovery toward defaults
 
         // Safety bounds
-        int minAifsn = default(2);               // Minimum AIFSN (cannot go below SIFS + 2 slots)
-        double minTxopLimit @unit(s) = default(0.5ms);  // Minimum TXOP limit
+        // minAifsn=2: per IEEE 802.11-2020 EDCA timing, AIFS = SIFS + AIFSN*aSlotTime;
+        // AIFS must exceed DIFS = SIFS + 2*aSlotTime, so AIFSN >= 2.
+        int minAifsn = default(2);
+        double minTxopLimit @unit(s) = default(0.5ms);
 
         // QoS constraints
-        double voDelayBound @unit(s) = default(0.15s);  // Voice delay upper bound
-        double viDelayBound @unit(s) = default(0.3s);    // Video delay upper bound
+        // voDelayBound=150ms: ITU-T G.114 ("if delay can be kept below this figure,
+        //   most applications will experience essentially transparent interactivity");
+        //   3GPP TS 23.501 Table 5.7.4-1 5QI=1 PDB=100ms (one-way, end-to-end UE<->UPF/N6);
+        //   3GPP TS 26.114 Annex E IMS VoIP transfer delay = 130ms.
+        double voDelayBound @unit(s) = default(0.15s);
+
+        // viDelayBound=150ms: 3GPP TS 23.501 Table 5.7.4-1 5QI=2 Conversational Video PDB=150ms;
+        //   3GPP TS 26.114 Annex E IMS conversational video transfer delay = 170ms.
+        //   (Previously 0.3s = 5QI=4 non-conversational, inconsistent with our 1 Mbps live stream traffic.)
+        double viDelayBound @unit(s) = default(0.15s);
 
         @display("i=block/control");
         @class(QadEdcaManager);
