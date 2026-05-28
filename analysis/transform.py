@@ -103,6 +103,8 @@ def _parse_iter_vars(itv: str) -> dict:
 def _scheme_of(config: str) -> str:
     if config.startswith("QadEdca"):
         return "QAD-EDCA"
+    if config.startswith("TunedStatic"):
+        return "Tuned Static EDCA"
     if config.startswith("Baseline"):
         return "Standard EDCA"
     return config

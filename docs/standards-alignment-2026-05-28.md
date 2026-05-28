@@ -112,7 +112,62 @@ sweep 值都收斂到相同的 BE throughput ≈ 5.5 Mbps**（見
 
 ---
 
-## 8. 相關檔案
+## 8. Tuned Static EDCA 對照組（晚間新增）
+
+`docs/dev-report-2026-04-14.md` 待辦清單第 2 項「建立 `tuned_static.ini`
+比較場景」於今晚補上。目的是給 QAD-EDCA 動態適應一個**靜態調參基準**——
+若手動調的固定參數已能解決飢餓，QAD-EDCA 的複雜度就需要更強的辯護。
+
+### 8.1 調整方案
+
+維持 AC_VO / AC_VI 為 IEEE 802.11-2020 Table 9-155 預設值，僅針對 AC_BE
+與 AC_BK 縮短 CWmin 與 AIFSN：
+
+| AC | edcaf 索引 | Standard (Table 9-155) | Tuned Static |
+|---|---|---|---|
+| AC_VO | 3 | CWmin=3,  AIFSN=2 | (不變) |
+| AC_VI | 2 | CWmin=7,  AIFSN=2 | (不變) |
+| AC_BE | 1 | CWmin=15, AIFSN=3 | **CWmin=7, AIFSN=2**（升至 AC_VI 等級）|
+| AC_BK | 0 | CWmin=15, AIFSN=7 | **CWmin=7, AIFSN=3**（升至 AC_BE 舊位置）|
+
+寫入路徑：`*.ap.wlan[*].mac.hcf.edca.edcaf[N].cwMin/aifsn`（INET 4.5 之
+`Edcaf.ned` 預設 `-1` 表「使用 802.11 預設」，明確指定即覆寫）。
+
+### 8.2 4 個新 config
+
+`simulations/scenarios/tuned_static.ini` 新增：
+- `TunedStatic_N5`、`TunedStatic_N10`、`TunedStatic_N15`、`TunedStatic_N20`
+- 站台組合與 `baseline.ini` 對應 N 配置完全一致（並行迭代 4 mixes × 5 reps
+  = 20 runs/config）；總 80 runs。
+
+### 8.3 結果（N=10, mix 1VO/1VI/4BE/4BK, 5 reps 平均）
+
+| 指標 | Standard | **Tuned Static** | QAD-EDCA |
+|---|---|---|---|
+| AC_BE throughput (Mbps) | 2.53 | **5.80** | 7.19 |
+| AC_BE avg delay (ms) | 1086 | **832** | 673 |
+| AC_BE loss rate (%) | 94.7 | 87.9 | 85.0 |
+| AC_VO/VI/BK | 同上 | 與標準一致 | 同上 |
+
+Tuned Static 落在 Standard 與 QAD-EDCA 之間：BE 吞吐量+129%（vs Standard）
+但仍比 QAD-EDCA 少 24%；BE 延遲-23%（vs Standard）但仍比 QAD-EDCA 高 24%。
+
+### 8.4 對報告論述的意涵
+
+1. **靜態調參能達成相當程度的 starvation alleviation**。報告不可以把
+   Standard EDCA 當作唯一基準，否則會高估 QAD-EDCA 的相對效益。
+2. **QAD-EDCA 的優勢領域**：本實驗用 CBR 穩態流量，Tuned Static 已能拿到
+   ~80% 的 BE 改善。**QAD-EDCA 的真正價值在於對「未知 / 變動 / 異質」負載
+   不需要事先人工調校**。對應的後續實驗應是 transient load（如
+   `HighLoad_Progressive` 的動態加入站台）或多種流量混合，這部分留作後續
+   工作。
+3. **與 §6 Sensitivity 結論呼應**：靜態調參到合理區間 + 動態適應收斂到操作
+   邊界，**穩態下兩者趨同**。QAD-EDCA 對演算法參數的 robustness 與
+   Tuned Static 對 CWmin/AIFSN 選擇的 robustness 是同一個現象的不同視角。
+
+---
+
+## 9. 相關檔案
 
 - 參數修改：`simulations/omnetpp.ini`、`simulations/network.ned`、`src/QadEdcaManager.ned`、`simulations/scenarios/baseline.ini`、`simulations/scenarios/qad_edca.ini`
 - 分析腳本：`analysis/parse_results.py`（修 SQL bug）、`analysis/transform.py`（新增）、`analysis/plot_figures.py`（擴 sweep / scaling / heatmap 函數）

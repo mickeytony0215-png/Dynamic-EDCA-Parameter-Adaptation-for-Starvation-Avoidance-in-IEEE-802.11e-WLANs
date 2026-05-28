@@ -114,17 +114,19 @@ def plot_timeline(df_ts: pd.DataFrame, outdir: str):
 
 def plot_n_scaling(df: pd.DataFrame, outdir: str):
     """Throughput / delay / loss versus number of stations (N=5,10,15,20)."""
-    nx = df[df["configName"].str.match(r"(Baseline|QadEdca)_N\d+$", na=False)].copy()
+    nx = df[df["configName"].str.match(r"(Baseline|TunedStatic|QadEdca)_N\d+$",
+                                        na=False)].copy()
     if nx.empty:
         return
     nx["N"] = nx["configName"].str.extract(r"_N(\d+)$").astype(int)
     metrics = [("throughput_mbps", "Throughput (Mbps)"),
                ("avg_delay_ms",    "Average Delay (ms)"),
                ("loss_rate_pct",   "Packet Loss Rate (%)")]
+    scheme_ls = {"Standard EDCA": "--", "Tuned Static EDCA": ":", "QAD-EDCA": "-"}
     fig, axes = plt.subplots(1, 3, figsize=(18, 5))
     for ax, (col, ylabel) in zip(axes, metrics):
         for scheme in nx["scheme"].unique():
-            ls = "-" if scheme == "QAD-EDCA" else "--"
+            ls = scheme_ls.get(scheme, "-.")
             for ac in AC_ORDER:
                 s = (nx[(nx["scheme"] == scheme) & (nx["ac"] == ac)]
                      .groupby("N")[col].mean().reset_index())
@@ -242,7 +244,8 @@ def main():
         df_full = df_metrics
     else:
         df_full = pd.read_csv(args.results_csv)
-        df_metrics = df_full[df_full["configName"].isin(["Baseline_N10", "QadEdca_N10"])]
+        df_metrics = df_full[df_full["configName"].isin(
+            ["Baseline_N10", "TunedStatic_N10", "QadEdca_N10"])]
         df_fair = df_metrics
 
     print(f"Generating figures in {args.outdir}/")
