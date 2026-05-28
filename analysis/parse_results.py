@@ -33,11 +33,21 @@ def _query_sqlite(db_path: str, query: str) -> pd.DataFrame:
 
 
 def parse_scalar_results(sca_file: str) -> pd.DataFrame:
-    """Parse scalar results from an OMNeT++ .sca SQLite file."""
+    """Parse scalar results from an OMNeT++ .sca SQLite file.
+
+    configName / repetition / iteration vars live in the row-per-attribute
+    `runAttr` table, not as columns on `run`.
+    """
     return _query_sqlite(sca_file, """
-        SELECT r.runId, r.runAttr AS configName,
+        SELECT s.runId,
+               cfg.attrValue   AS configName,
+               rep.attrValue   AS repetition,
+               itv.attrValue   AS iterationVars,
                s.moduleName, s.scalarName, s.scalarValue
-        FROM scalar s JOIN run r ON s.runId = r.runId
+        FROM scalar s
+        LEFT JOIN runAttr cfg ON cfg.runId = s.runId AND cfg.attrName = 'configname'
+        LEFT JOIN runAttr rep ON rep.runId = s.runId AND rep.attrName = 'repetition'
+        LEFT JOIN runAttr itv ON itv.runId = s.runId AND itv.attrName = 'iterationvarsd'
         WHERE s.scalarName LIKE '%throughput%'
            OR s.scalarName LIKE '%delay%'  OR s.scalarName LIKE '%jitter%'
            OR s.scalarName LIKE '%loss%'   OR s.scalarName LIKE '%packetSent%'
@@ -74,17 +84,25 @@ def compute_jains_fairness(throughputs: np.ndarray) -> float:
 
 
 def summarize_results(results_dir: str) -> pd.DataFrame | None:
-    """Parse all .sca files and return aggregated per-AC metrics."""
+    """Aggregate scalars across repetitions, keyed by (configName, iterationVars, ac, scalarName).
+
+    Each .sca file uses runId=1 internally, so we must group by configName +
+    iterationVars (which together identify one parameter combination) and treat
+    the 5 repetitions as the population for mean/std.
+    """
     frames = [df for f in glob.glob(os.path.join(results_dir, "*.sca"))
               if not (df := parse_scalar_results(f)).empty]
     if not frames:
         return None
     combined = pd.concat(frames, ignore_index=True)
     combined["ac"] = combined["moduleName"].apply(extract_ac)
-    return combined.groupby(["runId", "ac", "scalarName"]).agg(
+    return combined.groupby(
+        ["configName", "iterationVars", "ac", "scalarName"], dropna=False
+    ).agg(
         mean_value=("scalarValue", "mean"),
         std_value=("scalarValue", "std"),
-        count=("scalarValue", "count"),
+        n_reps=("repetition", "nunique"),
+        n_rows=("scalarValue", "count"),
     ).reset_index()
 
 
