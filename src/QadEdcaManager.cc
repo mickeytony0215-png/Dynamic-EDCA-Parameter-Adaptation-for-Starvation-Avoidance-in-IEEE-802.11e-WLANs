@@ -81,10 +81,18 @@ void QadEdcaManager::initialize(int stage)
         subscribedToSignals = true;
 
         // ---- Default parameters (IEEE 802.11-2020 Table 9-155, OFDM PHY) ----
-        defaultParams[AC_BK] = {15, 1023, 7, SimTime(2528, SIMTIME_US)};
-        defaultParams[AC_BE] = {15, 1023, 3, SimTime(2528, SIMTIME_US)};
-        defaultParams[AC_VI] = {7,   15,  2, SimTime(4096, SIMTIME_US)};
-        defaultParams[AC_VO] = {3,    7,  2, SimTime(2080, SIMTIME_US)};
+        // TXOP limits MUST match the standard OFDM defaults, identical to what
+        // INET's TxopProcedure resolves for txopLimit=-1 (see TxopProcedure.cc
+        // getTxopLimit): AC_BK=0, AC_BE=0, AC_VI=3.008 ms, AC_VO=1.504 ms.
+        // Seeding non-zero BK/BE TXOP here would (1) hand BE/BK a static
+        // multi-frame burst that Standard EDCA never gets — inflating results
+        // independently of the adaptation — and (2) keep the AP BE queue drained
+        // so the occupancy-based starvation detector could never fire. Both are
+        // confounds; the dynamic algorithm must be the only thing that differs.
+        defaultParams[AC_BK] = {15, 1023, 7, SIMTIME_ZERO};
+        defaultParams[AC_BE] = {15, 1023, 3, SIMTIME_ZERO};
+        defaultParams[AC_VI] = {7,   15,  2, SimTime(3008, SIMTIME_US)};
+        defaultParams[AC_VO] = {3,    7,  2, SimTime(1504, SIMTIME_US)};
 
         for (int i = 0; i < 4; i++) {
             currentParams[i] = defaultParams[i];
@@ -236,6 +244,17 @@ void QadEdcaManager::monitorAndAdjust()
 
 bool QadEdcaManager::detectStarvation()
 {
+    // Schmitt-trigger hysteresis. A queue-triggered controller that relieves
+    // starvation drains the very queue it watches, removing its own trigger and
+    // letting the boost decay — an oscillation that caps steady-state gain below
+    // an unconditional static tuning. The hysteresis band fixes this: switch ON
+    // at the high threshold, but stay ON until the queue/loss fall well below a
+    // lower *release* band. Adaptivity is preserved — in a genuine calm the
+    // queue empties below the release band, so we switch off and stop throttling
+    // VO/VI. (releaseFraction defaults to 0.4 of the trigger thresholds.)
+    const double releaseFraction = 0.4;
+    double qOn = queueThreshold, qOff = queueThreshold * releaseFraction;
+    double pOn = lossThreshold,  pOff = lossThreshold  * releaseFraction;
     for (int ac : {AC_BE, AC_BK}) {
         int qLen = queues[ac]->getNumPackets();
         int qCap = queues[ac]->getMaxNumPackets();
@@ -245,9 +264,10 @@ bool QadEdcaManager::detectStarvation()
         long total = enqueueCount[ac];
         double lossRate = (total > 0) ? double(dropCount[ac]) / total : 0.0;
 
-        bool starving = (double(qLen) / qCap > queueThreshold)
-                        || (lossRate > lossThreshold);
-        if (starving) return true;
+        double qTh = starvationActive ? qOff : qOn;
+        double pTh = starvationActive ? pOff : pOn;
+        if (double(qLen) / qCap > qTh || lossRate > pTh)
+            return true;
     }
     return false;
 }
@@ -264,12 +284,22 @@ void QadEdcaManager::applyStarvationMitigation()
     currentParams[AC_BE].aifsn = (int)std::round(smoothParams[AC_BE].aifsn);
     currentParams[AC_BK].aifsn = (int)std::round(smoothParams[AC_BK].aifsn);
 
-    // Strategy 2: Increase CWmin for VO and VI
-    int maxCw = defaultParams[AC_BE].cwMin;
+    // Strategy 2: Adjust CWmin on BOTH sides (the proposal's "CWmin" dimension).
+    //  (a) raise VO/VI CWmin -> less aggressive high priority (bounded by BE's
+    //      default 15 so we never make VO/VI less aggressive than BE).
+    int maxCw = defaultParams[AC_BE].cwMin;       // 15
     smoothParams[AC_VO].cwMin = std::min(smoothParams[AC_VO].cwMin * cwScaleFactor, (double)maxCw);
     smoothParams[AC_VI].cwMin = std::min(smoothParams[AC_VI].cwMin * cwScaleFactor, (double)maxCw);
     currentParams[AC_VO].cwMin = (int)std::round(smoothParams[AC_VO].cwMin);
     currentParams[AC_VI].cwMin = (int)std::round(smoothParams[AC_VI].cwMin);
+    //  (b) lower BE/BK CWmin -> more aggressive low priority. Floored at AC_VI's
+    //      default (7) so the starved ACs are promoted at most to the video AC's
+    //      contention level (mirrors the Tuned Static hand-tuning), not below it.
+    int minCwLow = defaultParams[AC_VI].cwMin;    // 7
+    smoothParams[AC_BE].cwMin = std::max(smoothParams[AC_BE].cwMin / cwScaleFactor, (double)minCwLow);
+    smoothParams[AC_BK].cwMin = std::max(smoothParams[AC_BK].cwMin / cwScaleFactor, (double)minCwLow);
+    currentParams[AC_BE].cwMin = (int)std::round(smoothParams[AC_BE].cwMin);
+    currentParams[AC_BK].cwMin = (int)std::round(smoothParams[AC_BK].cwMin);
 
     // Strategy 3: Reduce TXOP limit for VO and VI
     currentParams[AC_VO].txopLimit = std::max(currentParams[AC_VO].txopLimit * txopScaleFactor, minTxopLimit);

@@ -244,8 +244,12 @@ def main():
         df_full = df_metrics
     else:
         df_full = pd.read_csv(args.results_csv)
+        # Headline bars: the N=10 starvation case 1VO/1VI/4BE/4BK (numVo==1),
+        # where AC_BE/BK are most starved under Standard EDCA. Averaging over all
+        # four mixes would blur very different operating points into one bar.
         df_metrics = df_full[df_full["configName"].isin(
-            ["Baseline_N10", "TunedStatic_N10", "QadEdca_N10"])]
+            ["Baseline_N10", "TunedStatic_N10", "QadEdca_N10"])
+            & (df_full["numVo"] == 1)]
         df_fair = df_metrics
 
     print(f"Generating figures in {args.outdir}/")
