@@ -25,6 +25,15 @@
 \usepackage{url}
 \usepackage[hidelinks]{hyperref}
 
+% Relax float placement: this paper is table-heavy, so let more floats sit per
+% page (avoids tables piling up and spilling past the references).
+\setcounter{topnumber}{4}
+\setcounter{totalnumber}{6}
+\renewcommand{\topfraction}{0.95}
+\renewcommand{\bottomfraction}{0.85}
+\renewcommand{\textfraction}{0.07}
+\renewcommand{\floatpagefraction}{0.8}
+
 \graphicspath{{figures/}{./}}
 
 % Compact helper for access-category names (text mode).
@@ -634,6 +643,14 @@ natural next step and may also relax the steady-state ceiling.
 % =====================================================================
 \section{Comparison with State-of-the-Art}\label{sec:compare}
 % =====================================================================
+\begin{figure}[t]
+\centering
+\includegraphics[width=\columnwidth]{positioning_tradeoff.pdf}
+\caption{Performance--complexity positioning. QAD-EDCA occupies the
+no-training, no-foreknowledge quadrant between static EDCA and DRL.}
+\label{fig:pos}
+\end{figure}
+
 Table~\ref{tab:sota} places QAD-EDCA among representative schemes
 (Standard, AC-agnostic DRL, the static oracles, and AC-aware DRL).
 
@@ -664,14 +681,6 @@ cost. The only schemes that beat QAD-EDCA are the two ``need-to-know-first''
 upper bounds---the static oracle (needs the load) and DRL (needs training)---which
 is exactly the gap QAD-EDCA is designed to fill, and the performance--complexity
 trade-off is visualized in Fig.~\ref{fig:pos}.
-
-\begin{figure}[t]
-\centering
-\includegraphics[width=\columnwidth]{positioning_tradeoff.pdf}
-\caption{Performance--complexity positioning. QAD-EDCA occupies the
-no-training, no-foreknowledge quadrant between static EDCA and DRL.}
-\label{fig:pos}
-\end{figure}
 
 % =====================================================================
 \section{Conclusion}

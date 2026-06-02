@@ -93,7 +93,10 @@ def _ensemble(files, module, vname, edges):
 
 def _shade_phases(ax):
     ax.axvspan(20, 40, color="#cccccc", alpha=0.35, lw=0)
-    ax.text(30, ax.get_ylim()[1] * 0.94, "surge", ha="center",
+    # y in axes fraction (scale-independent) so the label sits just below the
+    # top frame on both linear and log axes, instead of being jammed into it.
+    ax.text(30, 0.94, "surge", ha="center", va="top",
+            transform=ax.get_xaxis_transform(),
             fontsize=10, color="#555555")
 
 
@@ -144,7 +147,8 @@ def plot_hi_delay(by, edges, centers, outdir):
         ax.plot(centers, hi, color=color, ls=ls, label=label, **emph.get(cfg, {}))
     # 150 ms VO QoS bound (ITU-T G.114 / 3GPP 5QI=1).
     ax.axhline(150, color="#777777", ls=(0, (6, 4)), lw=1.2, zorder=1)
-    ax.text(0.5, 165, "150 ms VO QoS bound", fontsize=9, color="#666666")
+    ax.text(8, 168, "150 ms VO QoS bound", fontsize=10, color="#555555",
+            ha="left", va="bottom")
     ax.set_yscale("log")
     ax.set_ylim(1, 600)
     _shade_phases(ax)
