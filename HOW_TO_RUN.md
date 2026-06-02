@@ -86,11 +86,8 @@ GUI 介面中可以：
 # GUI：QAD-EDCA 10 站台
 ./run.sh QadEdca_N10 qad_edca
 
-# GUI：高負載 Baseline
-./run.sh HighLoad_Baseline high_load
-
-# GUI：高負載 QAD-EDCA
-./run.sh HighLoad_QadEdca high_load
+# GUI：動態負載 QAD-EDCA（calm→surge→calm）
+./run.sh Dynamic_QadEdca dynamic_load
 
 # GUI：指定 run 編號
 ./run.sh Baseline_N10 baseline 3
@@ -122,13 +119,25 @@ GUI 介面中可以：
 | `QadEdca_N20` | 20 | 與 Baseline_N20 對照 |
 | `QadEdca_ThresholdSweep` | 10 | 掃描不同 Q_th / P_th 閾值 |
 
-### 高負載場景（場景檔：`high_load`）
+### Tuned Static 場景（場景檔：`tuned_static`）
+
+| Config 名稱 | 站台數 | 說明 |
+|-------------|--------|------|
+| `TunedStatic_N5/N10/N15/N20` | 5–20 | 手調靜態 EDCA 對照 |
+
+### 動態負載場景（場景檔：`dynamic_load`）
 
 | Config 名稱 | 說明 |
 |-------------|------|
-| `HighLoad_Baseline` | 標準 EDCA 極端高負載 |
-| `HighLoad_QadEdca` | QAD-EDCA 極端高負載 |
-| `HighLoad_Progressive` | 漸進式負載增加 |
+| `Dynamic_Baseline` | Standard EDCA，calm→surge→calm 60s |
+| `Dynamic_TunedStatic` | Tuned Static，同上 |
+| `Dynamic_QadEdca` | QAD-EDCA，同上 |
+
+### 全飽和壓測場景（場景檔：`allheavy`）
+
+| Config 名稱 | 說明 |
+|-------------|------|
+| `AllHeavy_Standard / AllHeavy_Tuned / AllHeavy_QadEdca` | 4VO/4VI/4BE/4BK 最高競爭 |
 
 每個 Config 可能有多個 run（不同的站台比例組合），用第三個參數指定，例如 `./run.sh Baseline_N10 baseline 2`。
 

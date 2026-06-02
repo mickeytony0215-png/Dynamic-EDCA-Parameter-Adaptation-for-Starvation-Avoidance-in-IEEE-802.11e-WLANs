@@ -30,7 +30,7 @@ SCHEMES = [
     ("Tuned Static EDCA", 1.5, 6.2, "#f39c12", "BE 5.80 Mbps,\nhand-tuned, fixed",
      (-6, 20), (-78, -6)),
     ("QAD-EDCA (ours)",   2.6, 4.6, "#2980b9", "BE 5.44 Mbps, O(1),\nno training, adapts",
-     (8, -6), (70, -22)),
+     (0, 22), (0, -40)),
     ("PDCF-DRL [6]",      8.6, 8.8, "#27ae60", "near-equal AC shares\n(no starv.), but DRL\ntraining required",
      (0, 22), (0, -42)),
 ]
@@ -46,17 +46,17 @@ def main():
         ax.annotate(name, (x, y), xytext=ldxy, textcoords="offset points",
                     ha="center", fontsize=12, fontweight="bold")
         ax.annotate(note, (x, y), xytext=ndxy, textcoords="offset points",
-                    ha="center", fontsize=8.5, color="#333333")
+                    ha="center", fontsize=9.5, color="#1a1a1a")
 
     # "sweet spot" guide for the low-cost adaptive region
     ax.axvspan(0, 3.2, color="#2980b9", alpha=0.06, zorder=0)
-    ax.text(1.6, 9.5, "training-free,\nimmediately deployable",
-            ha="center", fontsize=9, color="#2980b9")
+    ax.text(1.6, 9.6, "training-free,\nimmediately deployable",
+            ha="center", fontsize=10, color="#1f6391", fontweight="bold")
 
     ax.annotate("", xy=(8.2, 8.2), xytext=(2.6, 5.0),
                 arrowprops=dict(arrowstyle="->", ls="--", color="#888888"))
-    ax.text(5.2, 6.0, "more performance,\nbut training cost",
-            ha="center", fontsize=9, color="#888888", rotation=18)
+    ax.text(5.2, 6.2, "more performance,\nbut training cost",
+            ha="center", fontsize=10, color="#555555", rotation=18)
 
     ax.set_xlim(0, 10)
     ax.set_ylim(0, 10.5)

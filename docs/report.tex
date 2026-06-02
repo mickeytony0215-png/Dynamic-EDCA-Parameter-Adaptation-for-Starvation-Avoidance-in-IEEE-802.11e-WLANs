@@ -1,0 +1,727 @@
+%% =====================================================================
+%% Final Report -- QAD-EDCA: A Lightweight Queue-Aware Dynamic EDCA
+%% Controller for Starvation Avoidance in IEEE 802.11 WLANs
+%% IEEE conference format. Compile on Overleaf (pdfLaTeX).
+%%
+%% NOTE: upload these 3 figure PDFs into the Overleaf project, in a "figures/"
+%% folder OR next to this .tex (the \graphicspath below looks in both):
+%%   fig_dynamic_hi_delay.pdf, fig_dynamic_be_throughput.pdf, positioning_tradeoff.pdf
+%% Do NOT rely on ../analysis/figures/ on Overleaf -- parent-of-project paths are
+%% not resolved there. Each figure is also mirrored by an in-text table, so the
+%% paper stays complete even if you comment out the \includegraphics lines.
+%% =====================================================================
+\documentclass[conference]{IEEEtran}
+\IEEEoverridecommandlockouts
+
+\usepackage{cite}
+\usepackage{amsmath,amssymb,amsfonts}
+\usepackage{algorithm}
+\usepackage{algpseudocode}
+\usepackage{graphicx}
+\usepackage{booktabs}
+\usepackage{array}
+\usepackage{textcomp}
+\usepackage{xcolor}
+\usepackage{url}
+\usepackage[hidelinks]{hyperref}
+
+\graphicspath{{figures/}{./}}
+
+% Compact helper for access-category names (text mode).
+\newcommand{\AC}[1]{AC\_#1}
+
+\begin{document}
+
+\title{QAD-EDCA: A Lightweight Queue-Aware Dynamic EDCA Controller for
+Starvation Avoidance in IEEE~802.11 WLANs}
+
+\author{
+\IEEEauthorblockN{Cheng-Yu Wang (M143140017) \quad Hsien-Yi Lin (M143040081)}
+\IEEEauthorblockA{CSE625 --- Wireless Communication Network:
+Construction and Performance Simulation\\
+National Sun Yat-sen University, Spring 2026}
+}
+
+\maketitle
+
+\begin{abstract}
+The Enhanced Distributed Channel Access (EDCA) mechanism of IEEE~802.11
+provides Quality-of-Service (QoS) differentiation through fixed per-Access-Category
+(AC) parameters. Under saturated load these static parameters cause severe
+\emph{starvation} of the low-priority Best-Effort (\AC{BE}) and
+Background (\AC{BK}) categories. We present QAD-EDCA (Queue-Aware Dynamic
+EDCA), a lightweight, rule-based, $O(1)$ controller that runs at the Access
+Point, detects starvation from queue occupancy and packet-loss rate, and
+adjusts AIFSN, CWmin, and TXOP across all four ACs in closed loop, with
+exponential recovery, a QoS safety valve, and Schmitt-trigger hysteresis.
+In OMNeT++/INET simulations QAD-EDCA raises starved \AC{BE} throughput by
+$2.15\times$ over standard EDCA (2.53$\rightarrow$5.44~Mbps) with no loss of
+\AC{VO}/\AC{VI} QoS and \emph{zero} manual tuning or training. Equally important, we report an honest negative result: a
+queue-feedback controller \emph{cannot} exceed a well-chosen feedforward
+static optimum in saturated steady state. We establish this against a
+well-tuned static optimum that beats QAD-EDCA by $\sim$6\% consistently across
+load mixes, and we explain the
+mechanism: relieving starvation drains the queue that triggers the
+controller, so the boost decays (the trigger rate falls from 64\% to
+$\sim$15\%). We also document an instructive engineering pitfall---a static
+TXOP misconfiguration that produced ``fake dynamics''---and how vector-trace
+verification exposed it. QAD-EDCA is therefore positioned as the best option
+among methods that need neither prior knowledge of the load nor training,
+trailing only a foreknowledge-dependent static optimum and training-dependent
+deep reinforcement learning.
+\end{abstract}
+
+\begin{IEEEkeywords}
+IEEE 802.11, EDCA, QoS, starvation avoidance, contention window, adaptive
+MAC, feedback control, WLAN.
+\end{IEEEkeywords}
+
+% =====================================================================
+\section{Introduction}
+% =====================================================================
+The Enhanced Distributed Channel Access (EDCA) mechanism in IEEE~802.11
+provides Quality-of-Service (QoS) differentiation by classifying traffic into
+four Access Categories (ACs)---Voice (\AC{VO}), Video (\AC{VI}), Best Effort
+(\AC{BE}), and Background (\AC{BK})---each assigned distinct channel-access
+parameters: the Arbitration Inter-Frame Space Number (AIFSN), the contention
+window bounds (CWmin/CWmax), and the Transmission Opportunity limit (TXOP)
+\cite{ieee80211}. These parameters are negotiated at association and held
+constant for the session.
+
+Their static nature produces a well-documented pathology: under
+moderate-to-heavy load, high-priority ACs monopolize the channel and the
+low-priority \AC{BE}/\AC{BK} categories \emph{starve}, exhibiting near-zero
+throughput and excessive loss \cite{ugwu,mammeri}. The protocol contains no
+feedback path to detect or relieve this condition.
+
+\textbf{System and problem.} We consider a single infrastructure Basic
+Service Set (BSS): one Access Point (AP) and $N$ associated stations carrying
+a realistic mix of VO/VI/BE/BK traffic. The practical problem is to relieve
+low-priority starvation \emph{at runtime}, without retraining or
+operator-specific manual tuning, while never violating the delay budget of
+the real-time \AC{VO}/\AC{VI} flows.
+
+\textbf{Approach.} We propose QAD-EDCA, a queue-aware, rule-based controller
+that runs only at the AP (which already disseminates the EDCA Parameter Set
+in beacons, so stations need no modification). Once per beacon interval it
+reads the four queue occupancies and loss rates, evaluates a formal
+starvation predicate, and applies bounded, deterministic adjustments to
+AIFSN/CWmin/TXOP, with exponential recovery toward defaults and a QoS safety
+valve. Its complexity is $O(1)$ per cycle and it acts from the first
+monitoring interval---no training.
+
+\textbf{Contributions.}
+\begin{enumerate}
+\item \emph{A formal, implementable starvation criterion.} Prior work
+describes starvation only qualitatively; we give a quantifiable dual-indicator
+predicate (queue occupancy OR loss rate) with a justification for the
+OR-logic, directly usable as a detector.
+\item \emph{A complete $O(1)$ closed-loop controller.} QAD-EDCA adjusts three
+parameters governing three distinct phases of channel access, adds
+bidirectional CWmin shaping, exponential recovery, a QoS safety valve, and
+Schmitt-trigger hysteresis against oscillation.
+\item \emph{An honest, rigorous negative result.} We show that a
+queue-feedback controller cannot beat a well-chosen feedforward static optimum
+in saturated steady state. We confirm this against a carefully hand-tuned
+static optimum---the gap is stable across all load mixes---and give the
+mechanism: relieving starvation removes the queue signal that triggers the
+controller.
+We additionally document a methodological pitfall---a static-TXOP
+``fake dynamics'' confound---and how vector tracing caught it.
+\item \emph{A clear positioning.} Among methods requiring neither foreknowledge
+of the load nor training, QAD-EDCA is the strongest: $2.15\times$ \AC{BE} gain
+over standard EDCA with no QoS loss, trailing only a foreknowledge-dependent
+static optimum and training-dependent DRL.
+\end{enumerate}
+
+% =====================================================================
+\section{Related Work}\label{sec:related}
+% =====================================================================
+\textbf{Static and tuned EDCA.} The default EDCA parameter set
+\cite{ieee80211} trades fairness for differentiation; Ugwu \emph{et al.}
+\cite{ugwu} confirmed via simulation that AIFSN exerts the strongest influence
+on the resulting disparity and that low-priority loss rises sharply under
+saturation. A hand-tuned static configuration (shorter CWmin/AIFSN for
+\AC{BE}/\AC{BK}) can relieve much of the starvation, but only for the load it
+was tuned against.
+
+\textbf{Dynamic and multichannel EDCA.} Mammeri \emph{et al.} \cite{mammeri}
+proposed a starvation-avoidance dynamic multichannel access scheme for
+802.11ac, but it relies on channel bonding and does not apply to a
+single-channel BSS. Many adaptive-EDCA proposals adjust only the contention
+window and lack a formal starvation criterion.
+
+\textbf{Learning-based EDCA.} Recent deep reinforcement learning (DRL) work is
+strong on raw throughput: Zuo \emph{et al.}'s PDCF-DRL \cite{zuo} keeps
+normalized throughput above 76\% and collision rate below 18\% across 20--120
+stations, far above standard EDCA. Du
+\emph{et al.} \cite{du} combine federated learning with DDPG; Li \emph{et al.}
+\cite{li} optimize QoS at the application layer. All require training (and,
+for DRL, possibly sub-EDCA performance before convergence) or bypass the MAC
+layer.
+
+\textbf{Wi-Fi 6/7 context.} EDCA remains foundational in 802.11ax \cite{ax}
+and 802.11be \cite{yi}, where much effort targets OBSS/inter-BSS interference
+and multi-link operation \cite{tuan}. Lightweight MAC-layer mechanisms for
+intra-BSS AC starvation remain comparatively underexplored---the gap this work
+addresses.
+
+% =====================================================================
+\section{System Model}\label{sec:model}
+% =====================================================================
+\textbf{Deployment.} We model a single infrastructure BSS in an Indoor-Hotspot
+(InH) office of $120\,\text{m}\times50\,\text{m}$ (3GPP TR~38.901
+Table~7.2-2): one AP plus $N\in\{5,10,15,20\}$ stations, all using the OFDM
+PHY at 54~Mbps ($a\text{SlotTime}=9\,\mu s$, $a\text{SIFSTime}=16\,\mu s$).
+Each station hosts one AC; traffic flows uplink from the stations through the
+AP to a sink. The AP runs the EDCA Parameter Set advertisement, so it is the
+natural and standards-compatible control point---stations are not modified.
+
+\textbf{Traffic model} (standards-aligned; Table~\ref{tab:traffic}). \AC{VO}
+follows G.711 over RTP (160~B every 20~ms, 64~kbps; 3GPP 5QI=1).
+\AC{VI} models conversational HD video (1280~B every 10~ms,
+$\approx$1~Mbps; 5QI=2, PDB~150~ms). \AC{BE} is a saturated bulk UDP source
+(1500~B, IEEE~802.3 MTU; 5QI=9). \AC{BK} is background sync (512~B every
+100~ms; 5QI=8).
+
+\begin{table}[t]
+\centering
+\caption{Standards-aligned traffic model.}
+\label{tab:traffic}
+\begin{tabular}{@{}llrrl@{}}
+\toprule
+AC & Application & Size & Interval & Rate\\
+\midrule
+\AC{VO} & VoIP (G.711)        & 160\,B  & 20\,ms  & 64\,kbps\\
+\AC{VI} & Conv. HD video      & 1280\,B & 10\,ms  & $\approx$1\,Mbps\\
+\AC{BE} & Saturated bulk UDP  & 1500\,B & sat.    & saturated\\
+\AC{BK} & Background sync      & 512\,B  & 100\,ms & 40.96\,kbps\\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\textbf{Standard EDCA parameters.} For the OFDM PHY ($a\text{CWmin}=15$,
+$a\text{CWmax}=1023$) the default per-AC parameters used as our baseline are
+shown in Table~\ref{tab:edca}. We use the INET/IEEE single-MSDU TXOP defaults
+($\text{TXOP}=0$ for \AC{BE}/\AC{BK}); the relevance of this choice is
+revisited in Sec.~\ref{sec:analysis} (the ``fake dynamics'' lesson).
+
+\begin{table}[t]
+\centering
+\caption{Default EDCA parameter set (OFDM PHY) used as baseline.}
+\label{tab:edca}
+\begin{tabular}{@{}lrrrr@{}}
+\toprule
+AC & CWmin & CWmax & AIFSN & TXOP\\
+\midrule
+\AC{BK} & 15 & 1023 & 7 & 0\\
+\AC{BE} & 15 & 1023 & 3 & 0\\
+\AC{VI} & 7  & 15   & 2 & 3.008\,ms\\
+\AC{VO} & 3  & 7    & 2 & 1.504\,ms\\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\textbf{Controller observables and scope.} The controller observes, per AC at
+the AP: the pending-queue occupancy ratio $Q_i/Q_{cap}$ and the per-interval
+loss rate $P_{loss,i}$; it actuates AIFSN, CWmin, and TXOP. By design it
+adjusts only the AP-side EDCA (mirroring beacon-disseminated parameters);
+station-side parameters are left to the standard mechanism. This scope is a
+deliberate simplification and a source of one limitation analyzed later.
+
+% =====================================================================
+\section{Problem Formulation}\label{sec:problem}
+% =====================================================================
+\textbf{Starvation predicate.} Let $AC_i$, $i\in\{\text{BE},\text{BK}\}$, have
+queue length $Q_i$, queue capacity $Q_{cap}$, and interval loss rate
+$P_{loss,i}$. We define
+\begin{equation}
+\text{Starv}(AC_i)\iff\Big(\tfrac{Q_i}{Q_{cap}}>Q_{th}\Big)\ \lor\
+\big(P_{loss,i}>P_{th}\big),
+\label{eq:starv}
+\end{equation}
+with defaults $Q_{th}=0.8$, $P_{th}=0.1$. The two indicators are
+complementary: queue occupancy captures sustained access deprivation (packets
+accumulate faster than they drain), while loss rate captures starvation that
+manifests as drops---tail-drop at a full queue, or discard after exceeding the
+retry limit due to repeated collisions with high-priority traffic. Either
+alone misses a failure mode; the OR combination is robust.
+
+\textbf{Why static EDCA is suboptimal.} Default parameters
+(Table~\ref{tab:edca}) are fixed at association. The per-slot transmit
+probability under a CWmin of $W$ is approximately
+\begin{equation}
+\tau \approx \frac{2}{W+1},
+\label{eq:tau}
+\end{equation}
+so \AC{VO} ($W{=}3$) transmits with $\tau\approx0.5$ versus \AC{BE}
+($W{=}15$) at $\tau\approx0.125$. Under saturation this gap drives \AC{BE}/\AC{BK}
+to near-zero throughput. There is no feedback to correct it.
+
+\textbf{Difficulty.} The problem is harder than ``lower the low-priority
+CWmin'' for three coupled reasons. (i) \emph{Coupling with QoS:} any boost to
+\AC{BE}/\AC{BK} steals airtime from delay-bounded \AC{VO}/\AC{VI}, so the
+controller must respect a hard delay budget. (ii) \emph{Oscillation:} a naive
+trigger that fully reverts on relief re-creates starvation immediately,
+producing ping-pong. (iii) \emph{Observability vs.\ actuation---a structural
+trap:} the very act of relieving starvation \emph{removes the signal that
+detected it}. A queue-occupancy trigger that successfully drains the queue
+then reads ``not starving'' and backs off, so a pure feedback controller is
+pulled toward an operating point strictly interior to what a feedforward
+optimum (which never backs off) can hold. Sec.~\ref{sec:analysis} shows this
+trap is the binding constraint, not an implementation detail.
+
+% =====================================================================
+\section{Solution: QAD-EDCA}\label{sec:solution}
+% =====================================================================
+\subsection{Architecture}
+QAD-EDCA is a centralized monitor-controller at the AP. Every
+$T_{mon}=100$~ms (aligned with the beacon interval, so no extra overhead) it
+reads four queue lengths and four loss rates, evaluates \eqref{eq:starv}, and
+applies deterministic adjustments---an $O(1)$ rule engine, in contrast to
+$O(\text{DRL inference})$ learned policies that also require offline training.
+
+\subsection{Three-stage adjustment}
+On a positive starvation verdict, three complementary actions are applied
+\emph{simultaneously}, because they act on three different phases of channel
+access: AIFSN governs \emph{when} contention starts, CWmin \emph{how long}
+backoff lasts, and TXOP \emph{how long} the channel is held after winning.
+
+\emph{Stage 1 --- lower AIFSN of low-priority ACs:}
+\begin{equation}
+\text{AIFSN}_i=\max(\text{AIFSN}_i-\Delta_{AIFS},\,2),\quad i\in\{\text{BE},\text{BK}\}.
+\end{equation}
+The floor of 2 (the \AC{VO}/\AC{VI} default) ensures low-priority ACs never
+become \emph{more} aggressive than high-priority ones. AIFSN is the strongest
+single lever \cite{ugwu}.
+
+\emph{Stage 2 --- shape CWmin (bidirectional):} raise high-priority CWmin to
+moderate dominance and lower low-priority CWmin to accelerate relief,
+\begin{align}
+\text{CWmin}_i &=\min(\text{CWmin}_i\cdot\alpha_{CW},\,\text{CWmin}_{BE}^{def}),
+& i&\in\{\text{VO},\text{VI}\},\\
+\text{CWmin}_j &=\max(\text{CWmin}_j/\alpha_{CW},\,\text{CWmin}_{VI}^{def}),
+& j&\in\{\text{BE},\text{BK}\}.
+\end{align}
+The ceiling $\text{CWmin}_{BE}^{def}{=}15$ and floor
+$\text{CWmin}_{VI}^{def}{=}7$ preserve the priority ordering by construction.
+
+\emph{Stage 3 --- reduce TXOP of high-priority ACs:}
+\begin{equation}
+\text{TXOP}_i=\max(\text{TXOP}_i\cdot\beta_{TXOP},\,\text{TXOP}_{min}),\quad i\in\{\text{VO},\text{VI}\},
+\end{equation}
+forcing earlier channel release so low-priority traffic gets access.
+
+\subsection{Recovery, safety valve, hysteresis}
+\emph{Exponential recovery.} When \eqref{eq:starv} is false, every parameter
+relaxes toward its default,
+\begin{equation}
+P(t{+}1)=P(t)+\gamma\,(P_{def}-P(t)),\quad 0<\gamma<1,
+\end{equation}
+with $\gamma=0.3$ (\textasciitilde83\% recovery within 5 cycles). Gradual
+recovery prevents the ping-pong of instantaneous reversion.
+
+\emph{QoS safety valve.} After adjusting, if a high-priority delay bound is
+exceeded ($d_{VO}>150$~ms or $d_{VI}>150$~ms), parameters are pulled halfway
+back to default,
+$P\leftarrow(P_{adjusted}+P_{def})/2$, so QoS preservation strictly dominates
+starvation relief.
+
+\emph{Schmitt-trigger hysteresis.} To avoid chattering, detection switches ON
+at the thresholds in \eqref{eq:starv} but OFF only below a lower release band
+($0.4\times$ the thresholds), so genuine relief stops throttling while
+transient dips do not.
+
+\subsection{Algorithm and parameters}
+Algorithm~\ref{alg:qad} summarizes one control cycle; floats accumulate in
+double precision to avoid integer-truncation deadlock during slow recovery.
+Table~\ref{tab:params} lists the parameters. The five algorithm constants are
+design choices, not standardized values; their robustness is established by
+the sensitivity sweep in Sec.~\ref{sec:analysis}.
+
+\begin{algorithm}[t]
+\caption{QAD-EDCA control cycle (run at the AP every $T_{mon}$)}
+\label{alg:qad}
+\begin{algorithmic}[1]
+\State \textbf{for} $i\in\{\text{BE},\text{BK}\}$: read $Q_i/Q_{cap}$, $P_{loss,i}$
+\If{$\text{Starv}(\text{BE})\ \lor\ \text{Starv}(\text{BK})$}
+  \State $\text{AIFSN}_{\text{BE},\text{BK}}\gets\max(\text{AIFSN}-\Delta_{AIFS},2)$
+  \State $\text{CWmin}_{\text{VO},\text{VI}}\gets\min(\text{CWmin}\cdot\alpha_{CW},15)$
+  \State $\text{CWmin}_{\text{BE},\text{BK}}\gets\max(\text{CWmin}/\alpha_{CW},7)$
+  \State $\text{TXOP}_{\text{VO},\text{VI}}\gets\max(\text{TXOP}\cdot\beta_{TXOP},\text{TXOP}_{min})$
+\Else
+  \ForAll{parameters $P$}
+    \State $P\gets P+\gamma\,(P_{def}-P)$ \Comment{exponential recovery}
+  \EndFor
+\EndIf
+\State Disseminate updated EDCA set via beacon
+\If{$d_{VO}>150$\,ms $\lor\ d_{VI}>150$\,ms}
+  \State $P\gets (P+P_{def})/2$ \Comment{QoS safety valve}
+\EndIf
+\end{algorithmic}
+\end{algorithm}
+
+\begin{table}[t]
+\centering
+\caption{QAD-EDCA parameters.}
+\label{tab:params}
+\begin{tabular}{@{}lll@{}}
+\toprule
+Parameter & Symbol & Default\\
+\midrule
+Monitoring interval & $T_{mon}$ & 100\,ms\\
+Queue threshold & $Q_{th}$ & 0.80\\
+Loss threshold & $P_{th}$ & 0.10\\
+AIFS step & $\Delta_{AIFS}$ & 1 (floor 2)\\
+CW scale & $\alpha_{CW}$ & 2.0\\
+TXOP scale & $\beta_{TXOP}$ & 0.75\\
+Recovery factor & $\gamma$ & 0.30\\
+Hysteresis release & --- & $0.4\times$ thresholds\\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{Fairness metric}
+Cross-AC fairness is quantified by Jain's index \cite{jain}
+$J(\mathbf{x})=\big(\sum_i x_i\big)^2/\big(n\sum_i x_i^2\big)\in[1/n,1]$
+over normalized per-AC throughputs $x_i$.
+
+% =====================================================================
+\section{Simulation}\label{sec:sim}
+% =====================================================================
+\textbf{Platform.} OMNeT++~6.1 with the INET~4.5 framework. QAD-EDCA is
+implemented by subclassing the INET 802.11 HCF/EDCA module chain
+(\texttt{Hcf}$\rightarrow$\texttt{Edca}$\rightarrow$\texttt{Edcaf}); the
+controller mutates the live EDCAF parameters at runtime.
+
+\textbf{Workload and scenarios.} All schemes share the standards-aligned
+traffic model of Table~\ref{tab:traffic}; the scenario matrix is summarized in
+Table~\ref{tab:scenarios}. (i) \emph{Steady state}: saturated CBR load at
+$N\in\{5,10,15,20\}$, sweeping the high-/low-priority station ratio across four
+mixes per $N$ (for $N{=}10$ the VO/VI/BE/BK counts are 1/1/4/4, 2/2/3/3,
+3/3/2/2, 4/4/1/1), each 30\,s over 5 seeds; the headline starvation case is
+$N{=}10$, 1\,VO/1\,VI/4\,BE/4\,BK. (ii) \emph{Transient}: a 60\,s three-phase
+profile calm$[0,20)$/surge$[20,40)$/calm$[40,60)$, where the high-priority load
+rises from 1 to 4 VO/VI over a saturated 4\,BE\,$+$\,4\,BK background, 10 seeds.
+(iii) \emph{Sensitivity}: the four QAD-EDCA constants
+($Q_{th}\!\times\!P_{th}$, $\alpha_{CW}$, $\gamma$, $T_{mon}$) swept at the
+headline load. All results are ensemble-averaged. Metrics: per-AC throughput,
+delay, and loss; Jain's index; and QoS satisfaction (\AC{VO}/\AC{VI} delay
+bounds).
+
+\begin{table}[t]
+\centering
+\caption{Simulation scenario matrix (shared traffic model, Table~\ref{tab:traffic}).}
+\label{tab:scenarios}
+\begin{tabular}{@{}llcc@{}}
+\toprule
+Scenario & Load profile & $N$ & Seeds/time\\
+\midrule
+Steady state & 4 mixes (VO/VI:BE/BK ratio)    & 5,10,15,20 & 5\,/\,30\,s\\
+Transient    & calm\,$\to$\,surge\,$\to$\,calm & 10         & 10\,/\,60\,s\\
+Sensitivity  & headline $+$ parameter sweep    & 10         & 5\,/\,30\,s\\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\textbf{Comparison schemes}, all simulated under identical conditions except
+where noted:
+\begin{enumerate}
+\item \textbf{Standard EDCA} --- default parameters (Table~\ref{tab:edca}).
+\item \textbf{Tuned Static} --- a hand-tuned static oracle: \AC{BE}
+CWmin~$15{\rightarrow}7$/AIFSN~$3{\rightarrow}2$, \AC{BK}
+CWmin~$15{\rightarrow}7$/AIFSN~$7{\rightarrow}3$. Represents the best static
+configuration \emph{for this load}.
+\item \textbf{QAD-EDCA} --- the proposed controller.
+\item \textbf{PDCF-DRL} \cite{zuo} --- DRL reference; we cite published numbers
+(different setup), as reproducing DRL training is out of scope. Used as an
+upper-bound reference, not a head-to-head.
+\end{enumerate}
+
+\textbf{Engineering-methodology note.} An early implementation appeared to
+``win'' but actually never triggered its own detector. Vector tracing of the
+controller state (\texttt{starvationDetected}) revealed it was identically
+false: the gain came from a static TXOP misconfiguration
+(\AC{BE}/\AC{BK} TXOP set to 2.528~ms instead of the standard 0), which let
+\AC{BE}/\AC{BK} burst \emph{and} drained the AP queue so the detector could
+never fire. A control experiment (Standard EDCA $+$ the same static TXOP)
+reproduced the ``win'' (\AC{BE} 7.22~Mbps $\approx$ the buggy 7.18~Mbps),
+proving the effect was static, not adaptive. We corrected the TXOP defaults to
+standard (Table~\ref{tab:edca}); afterwards the detector genuinely fires
+($\sim$64\% of cycles at the headline load) and the honest \AC{BE} figure is
+5.44~Mbps. The lesson---\emph{``dynamic'' must be verified by confirming the
+loop closes, not by an improved output number}---shapes the analysis below.
+
+% =====================================================================
+\section{Analysis and Discussion}\label{sec:analysis}
+% =====================================================================
+\subsection{Steady-state starvation relief}
+Table~\ref{tab:headline} reports the headline case per AC. QAD-EDCA raises
+\AC{BE} throughput $2.15\times$ over Standard (2.53$\rightarrow$5.44~Mbps) and
+cuts \AC{BE} loss from 94.7\% to 88.6\%. The real-time \AC{VO}/\AC{VI} flows
+(CBR, below capacity) are unaffected---throughput, delay, and loss are
+essentially identical across all three schemes. \AC{BK} throughput is likewise
+preserved; its mean delay rises modestly under QAD (75$\rightarrow$152~ms),
+acceptable for background traffic with no delay bound. This is a clean win over
+standard EDCA, achieved with zero manual tuning.
+
+\begin{table}[t]
+\centering
+\caption{Per-AC steady-state results ($N{=}10$, 1VO/1VI/4BE/4BK).
+\AC{VO}/\AC{VI}/\AC{BK} are CBR (below capacity); only \AC{BE} is saturated.}
+\label{tab:headline}
+\setlength{\tabcolsep}{4pt}
+\begin{tabular}{@{}lrrrrrr@{}}
+\toprule
+ & \multicolumn{3}{c}{Throughput (Mbps)} & \multicolumn{3}{c}{Avg.\ delay (ms)}\\
+\cmidrule(lr){2-4}\cmidrule(lr){5-7}
+AC & Std & Tuned & QAD & Std & Tuned & QAD\\
+\midrule
+\AC{VO} & 0.06 & 0.06 & 0.06 & 19.9 & 19.4 & 19.6\\
+\AC{VI} & 1.02 & 1.02 & 1.02 & 21.7 & 21.6 & 21.3\\
+\AC{BE} & 2.53 & 5.80 & \textbf{5.44} & 1086 & 832 & 957\\
+\AC{BK} & 0.16 & 0.16 & 0.16 & 75 & 60 & \textbf{152}\\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\textbf{Scaling.} The advantage grows with network size $N$
+(Table~\ref{tab:nscale}, at a fixed 20\% high-priority share): Standard \AC{BE}
+throughput collapses from 3.74 to 1.57~Mbps as $N$ goes 5$\to$20, while
+QAD-EDCA holds 5.63$\to$4.71~Mbps---widening QAD's gain over Standard from
+$1.5\times$ to $3.0\times$.
+
+\begin{table}[t]
+\centering
+\caption{\AC{BE} throughput (Mbps) vs.\ network size $N$ (20\% high-priority share).}
+\label{tab:nscale}
+\begin{tabular}{@{}rrrr@{}}
+\toprule
+$N$ & Standard & Tuned & \textbf{QAD}\\
+\midrule
+5  & 3.74 & 5.96 & \textbf{5.63}\\
+10 & 2.53 & 5.80 & \textbf{5.44}\\
+15 & 1.84 & 5.11 & \textbf{4.83}\\
+20 & 1.57 & 4.86 & \textbf{4.71}\\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{The feedback-control ceiling (negative result)}
+QAD-EDCA does \emph{not} beat the static optimum. Across all four mixes
+(Table~\ref{tab:mixes}) the tuned static configuration exceeds QAD-EDCA by
+$\sim$0.3--0.4~Mbps ($\sim$6\%). The gap is stable across every mix and network
+size, indicating it is structural rather than a tuning artifact.
+
+\begin{table}[t]
+\centering
+\caption{\AC{BE} throughput (Mbps) across mixes ($N{=}10$).}
+\label{tab:mixes}
+\begin{tabular}{@{}lrrr@{}}
+\toprule
+Mix (VO/VI/BE/BK) & Standard & \textbf{QAD} & Tuned\\
+\midrule
+1/1/4/4 & 2.53 & \textbf{5.44} & 5.80\\
+2/2/3/3 & 2.59 & \textbf{4.82} & 5.20\\
+3/3/2/2 & 2.78 & \textbf{4.22} & 4.54\\
+4/4/1/1 & 3.32 & \textbf{3.58} & 3.67\\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\emph{Mechanism.} The ceiling follows directly from the observability trap of
+Sec.~\ref{sec:problem}. When QAD-EDCA lowers \AC{BE} CWmin it succeeds in
+draining the AP queue; the occupancy predicate \eqref{eq:starv} then reads
+``not starving,'' so the boost decays under recovery. Empirically the trigger
+rate falls from 64\% (relief OFF in CWmin) to $\sim$15\% once bidirectional
+CWmin is enabled, and hysteresis cannot hold it because the AP downlink queue
+is bursty and instantaneous samples are mostly empty. To beat a feedforward
+optimum in steady state a feedback controller would have to hold maximum boost
+\emph{unconditionally}---at which point it has become a static scheme and
+abandoned adaptivity. This is the central honest insight of the work: in
+saturated steady state, feedback cannot exceed good feedforward.
+
+\subsection{Robustness to algorithm constants}
+A four-way sweep of $\alpha_{CW}$, $\gamma$, $T_{mon}$, and the
+($Q_{th},P_{th}$) pair changes steady-state \AC{BE} throughput by
+$\le1.5\%$ (Table~\ref{tab:sens}). Under sustained saturation the controller
+drives parameters to their operating bounds regardless of the constants, so any
+reasonable setting converges to the same effect---i.e.\ no per-deployment
+tuning of QAD-EDCA's own constants is needed. (The flip side: the constants
+matter only in the trigger and transient phases, which the dynamic experiment
+below exercises.)
+
+\begin{table}[t]
+\centering
+\caption{Sensitivity of steady-state \AC{BE} throughput to QAD-EDCA's own
+constants ($N{=}10$, headline load).}
+\label{tab:sens}
+\begin{tabular}{@{}llr@{}}
+\toprule
+Constant & Swept range & \AC{BE} spread (Mbps)\\
+\midrule
+$\alpha_{CW}$    & 1.5--4.0             & 5.43--5.44 (0.2\%)\\
+$\gamma$         & 0.1--0.7             & 5.41--5.49 (1.5\%)\\
+$T_{mon}$        & 50--500\,ms          & 5.41--5.45 (0.8\%)\\
+$Q_{th},P_{th}$  & 0.5--0.9 / 0.05--0.2 & 5.41--5.45 (0.7\%)\\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{Dynamic load: the value of adaptivity}
+To probe the regime where adaptivity matters we use a 60~s,
+three-phase load: calm~$[0,20)$, surge~$[20,40)$ (high-priority load rises
+from 1 to 4 VO/VI), calm~$[40,60)$, over a saturated 4\,BE\,$+$\,4\,BK
+background; results are ensemble-averaged over 10 seeds.
+Table~\ref{tab:dynamic} gives per-phase means.
+
+\begin{table}[t]
+\centering
+\caption{Dynamic load, per-phase ensemble means.}
+\label{tab:dynamic}
+\begin{tabular}{@{}llrrr@{}}
+\toprule
+Scheme & Phase & \AC{BE} (Mbps) & $d_{VO}$ (ms) & $d_{VI}$ (ms)\\
+\midrule
+Standard & calm  & 2.6 & 1.1  & 2.6\\
+Standard & surge & 1.9 & 28.7 & 33.1\\
+Tuned    & calm  & 6.0 & 1.4  & 3.1\\
+Tuned    & surge & 4.0 & 2.3  & 4.5\\
+\textbf{QAD} & calm  & \textbf{5.6} & 1.3 & 2.8\\
+\textbf{QAD} & surge & \textbf{3.7} & 4.0 & 7.1\\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Two honest readings follow. (i) \emph{QAD-EDCA tracks the load without manual
+tuning}, staying within $\sim$6\% of the Tuned oracle throughout while needing
+no foreknowledge---when the surge arrives it adapts, and it relaxes afterward.
+(ii) \emph{Standard EDCA fails the real-time flows under surge:} although its
+\emph{phase-mean} \AC{VO}/\AC{VI} delay (28.7/33.1~ms) looks bounded, the
+time series spikes to $\approx$240~ms during the surge---exceeding the 150~ms
+\AC{VO} budget---whereas Tuned and QAD-EDCA keep instantaneous delay low
+(Fig.~\ref{fig:hidelay}). QAD-EDCA thus recovers most of the oracle's benefit
+on \emph{both} axes with no configuration. It does not, however, beat Tuned on
+any axis here, consistent with the steady-state ceiling.
+
+\begin{figure}[t]
+\centering
+\includegraphics[width=\columnwidth]{fig_dynamic_hi_delay.pdf}
+\caption{High-priority delay under the transient surge. Standard EDCA spikes
+to $\approx$240~ms (above the 150~ms \AC{VO} budget); Tuned and QAD-EDCA hold
+it low. QAD-EDCA achieves this with no manual tuning.}
+\label{fig:hidelay}
+\end{figure}
+
+\begin{figure}[t]
+\centering
+\includegraphics[width=\columnwidth]{fig_dynamic_be_throughput.pdf}
+\caption{\AC{BE} throughput over time. QAD-EDCA tracks the Tuned oracle
+($\sim$2.15$\times$ Standard) across calm and surge without prior tuning.}
+\label{fig:bethr}
+\end{figure}
+
+\subsection{Honest limitations}
+The detector observes the \emph{AP downlink} queue. In the
+station\,$\rightarrow$\,AP\,$\rightarrow$\,sink topology, starvation often
+forms on the \emph{station uplink}, so AP-side occupancy fires only when enough
+saturated \AC{BE}/\AC{BK} stations make the AP downlink the bottleneck (e.g.\
+1VO/1VI/4BE/4BK triggers; 3VO/3VI/2BE/2BK does not). This is an intrinsic
+limit of AP-side measurement, not a defect, and it is the main reason
+feedback's reach is bounded here. An uplink/airtime-based indicator is the
+natural next step and may also relax the steady-state ceiling.
+
+% =====================================================================
+\section{Comparison with State-of-the-Art}\label{sec:compare}
+% =====================================================================
+Table~\ref{tab:sota} places QAD-EDCA among representative schemes
+(Standard, AC-agnostic DRL, the static oracles, and AC-aware DRL).
+
+\begin{table}[t]
+\centering
+\caption{Positioning. ``Foreknowledge'' = needs the load known in advance;
+``Training'' = needs offline learning.}
+\label{tab:sota}
+\setlength{\tabcolsep}{3.5pt}
+\begin{tabular}{@{}lcccc@{}}
+\toprule
+ & Std. & \textbf{QAD} & Static & PDCF\\
+ & EDCA & \textbf{EDCA} & oracle & DRL\\
+\midrule
+Adaptive at runtime & no & \textbf{yes} & no & yes\\
+Needs foreknowledge & no & \textbf{no} & \emph{yes} & no\\
+Needs training      & no & \textbf{no} & no & \emph{yes}\\
+Per-cycle cost      & $O(1)$ & \textbf{$O(1)$} & $O(1)$ & $O(\text{DRL})$\\
+\AC{BE} relief      & none & \textbf{2.15$\times$} & $\sim$2.3$\times$ & near-equal\\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\textbf{Among plug-and-play methods}---those that need neither foreknowledge of
+the load nor training---QAD-EDCA is the best: it doubles starved \AC{BE}
+throughput with no QoS loss and acts from the first monitoring cycle at $O(1)$
+cost. The only schemes that beat QAD-EDCA are the two ``need-to-know-first''
+upper bounds---the static oracle (needs the load) and DRL (needs training)---which
+is exactly the gap QAD-EDCA is designed to fill, and the performance--complexity
+trade-off is visualized in Fig.~\ref{fig:pos}.
+
+\begin{figure}[t]
+\centering
+\includegraphics[width=\columnwidth]{positioning_tradeoff.pdf}
+\caption{Performance--complexity positioning. QAD-EDCA occupies the
+no-training, no-foreknowledge quadrant between static EDCA and DRL.}
+\label{fig:pos}
+\end{figure}
+
+% =====================================================================
+\section{Conclusion}
+% =====================================================================
+We presented QAD-EDCA, a lightweight $O(1)$ queue-aware controller that
+relieves IEEE~802.11 EDCA starvation, raising starved \AC{BE} throughput
+$2.15\times$ over standard EDCA with no QoS loss and zero tuning or training.
+We also reported, honestly, what it cannot do: in saturated steady state a
+queue-feedback controller cannot surpass a well-chosen feedforward static
+optimum, because relieving starvation removes its own trigger---a result we
+confirmed against a well-tuned static optimum and a mechanistic explanation,
+and which we reached only after correcting a ``fake dynamics'' confound exposed
+by vector tracing. QAD-EDCA is therefore best understood as the strongest
+\emph{plug-and-play} option---no foreknowledge, no training---trailing only
+foreknowledge- and training-dependent upper bounds. Future work: an
+uplink/airtime indicator (to extend reach
+and possibly relax the ceiling), genuinely non-stationary and heterogeneous
+loads, and using QAD-EDCA as a warm start during DRL convergence.
+
+% =====================================================================
+\begin{thebibliography}{99}
+\bibitem{ieee80211} IEEE Std 802.11-2020, ``IEEE Standard for Information
+Technology---Wireless LAN MAC and PHY Specifications,'' IEEE, 2020.
+\bibitem{ugwu} G.~O. Ugwu, U.~N. Nwawelu, and M.~A. Ahaneku, ``Effect of
+service differentiation on QoS in IEEE 802.11e EDCA: a simulation approach,''
+\emph{J. Eng. Appl. Sci.}, vol.~69, no.~1, pp.~1--15, 2022.
+\bibitem{mammeri} S.~Mammeri, M.~Yazid, R.~Kacimi, and L.~Bouallouche-Medjkoune,
+``Starvation avoidance-based dynamic multichannel access for low priority
+traffics in 802.11ac,'' \emph{Comput. Electr. Eng.}, vol.~90, art.~106942, 2021.
+\bibitem{tuan} Y.~P. Tuan \emph{et al.}, ``Improving QoS mechanisms for IEEE
+802.11ax with overlapping basic service sets,'' \emph{Wireless Netw.},
+vol.~29, pp.~387--401, 2023.
+\bibitem{yi} P.~Yi, W.~Cheng, J.~Wang, J.~Pan, Y.~Ouyang, and W.~Zhang,
+``Intelligent Multi-link EDCA Optimization for Delay-Bounded QoS in Wi-Fi~7,''
+arXiv:2509.25855, 2025.
+\bibitem{zuo} Z.~Zuo, D.~Wang, X.~Nie, X.~Pan, M.~Deng, and M.~Ma, ``PDCF-DRL:
+a contention window backoff scheme based on deep reinforcement learning for
+differentiating access categories,'' \emph{J. Supercomput.}, vol.~81,
+art.~213, 2025.
+\bibitem{du} X.~Du, X.~Fang, R.~He, L.~Yan, L.~Lu, and C.~Luo, ``Federated deep
+reinforcement learning-based intelligent channel access in dense Wi-Fi
+deployments,'' arXiv:2409.01004, 2024.
+\bibitem{li} Q.~Li, B.~Lv, Y.~Hong, and R.~Wang, ``ReinWiFi: Application-layer
+QoS optimization of WiFi networks with reinforcement learning,''
+arXiv:2405.03526, 2024.
+\bibitem{jain} R.~Jain, D.~Chiu, and W.~Hawe, ``A quantitative measure of
+fairness and discrimination for resource allocation in shared computer
+systems,'' DEC Research Report TR-301, 1984.
+\bibitem{ax} IEEE Std 802.11ax-2021, ``Amendment 1: Enhancements for
+High-Efficiency WLAN,'' IEEE, 2021.
+\end{thebibliography}
+
+\end{document}

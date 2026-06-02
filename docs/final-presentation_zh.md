@@ -106,6 +106,27 @@ $$\text{Starvation}(AC_i) \iff \Big(\tfrac{Q_i}{Q_{cap}} > Q_{th}\Big) \lor \big
 | $\gamma$ (recovery) | 0.3 | 自訂 |
 | minAifsn | 2 | IEEE：AIFS=SIFS+AIFSN·slot > DIFS ⇒ AIFSN≥2 |
 
+### 投影片 3-5：演算法虛擬碼（O(1) / 每 $T_{mon}$ 一次，在 AP）
+
+```
+每隔 T_mon（=100 ms，與 Beacon 同步）:
+  1. 讀取: 對 i ∈ {BE, BK} 讀 佇列佔用率 Q_i/Q_cap、丟包率 P_loss_i
+  2. 偵測 (含 Schmitt 遲滯):
+       Starv(AC_i) ⟺ (Q_i/Q_cap > Q_th) ∨ (P_loss_i > P_th)
+  3. if Starv(BE) ∨ Starv(BK):            // 飢餓 → 三維調整
+       AIFSN_{BE,BK} = max(AIFSN − 1, 2)
+       CWmin_{VO,VI} = min(CWmin × α_CW, 15)     // 抑制高優先權
+       CWmin_{BE,BK} = max(CWmin ÷ α_CW, 7)      // 加速低優先權
+       TXOP_{VO,VI}  = max(TXOP × β_TXOP, TXOP_min)
+     else:                                  // 無飢餓 → 指數衰減回復
+       對每個參數 P: P ← P + γ·(P_default − P)
+  4. 廣播: 經 Beacon 的 EDCA Parameter Set 下發新參數
+  5. QoS 安全閥: if d_VO > 150ms ∨ d_VI > 150ms:
+       P ← (P_adjusted + P_default) / 2       // QoS 優先於飢餓緩解
+```
+- 核心數學：通道存取機率 $\tau \approx 2/(\mathrm{CWmin}+1)$——CWmin 3→15 使 $\tau$ 由 0.5 降到 0.125，這是「抑制高優先權」的量化依據。
+- 複雜度 **O(1)**：每週期只讀 4 佇列 + 4 丟包率、做門檻判斷與定值運算——無訓練、無矩陣運算（對比 DRL 的 O(DRL 推論)）。
+
 ---
 
 ## 4. 實驗設定與穩態結果（~3 分鐘）
@@ -120,23 +141,47 @@ $$\text{Starvation}(AC_i) \iff \Big(\tfrac{Q_i}{Q_{cap}} > Q_{th}\Big) \lor \big
 - 對照：**Standard EDCA / Tuned Static EDCA / QAD-EDCA** 三路。
   - Tuned Static：手動把 AC_BE→(CWmin 15→7, AIFSN 3→2)、AC_BK→(15→7, 7→3)，作為「一次性人工調參」基準。
 
+**場景矩陣**（共用上述流量模型，對齊報告 Table II）：
+
+| 場景 | 負載樣態 | N | 重複 × 時間 |
+|---|---|---|---|
+| 穩態 | 4 種 mix（VO/VI:BE/BK 比例；N=10：1/1/4/4、2/2/3/3、3/3/2/2、4/4/1/1） | 5,10,15,20 | 5 × 30s |
+| 動態 | calm → surge → calm | 10 | 10 × 60s |
+| 敏感度 | 頭條負載 + 參數掃描（Q_th×P_th、α_CW、γ、T_mon） | 10 | 5 × 30s |
+
 ### 投影片 4-2：穩態三路對比（N=10，1 VO/1 VI/4 BE/4 BK，飢餓案例）
 圖：`throughput_comparison.png`、`delay_comparison.png`、`packet_loss.png`
 
-| 指標（AC_BE） | Standard | Tuned Static | **QAD-EDCA** |
-|---|---|---|---|
-| 吞吐量 (Mbps) | 2.53 | 5.80 | **5.44** |
-| 平均延遲 (ms) | 1086 | 832 | **957** |
-| 丟包率 (%) | 94.7 | 87.9 | **88.6** |
-| AC_VO/VI/BK | — | 三路幾乎一致 | — |
+per-AC 結果（VO/VI/BK 為 CBR 未飽和，只有 BE 飽和）：
 
-- **QAD-EDCA 把 BE 吞吐量提升約 2.15×（2.53→5.44）、延遲降 ~12%**，且 VO/VI/BK 吞吐量不受影響。
+| AC | 吞吐 Std/Tuned/QAD (Mbps) | 延遲 Std/Tuned/QAD (ms) |
+|---|---|---|
+| VO | 0.06 / 0.06 / 0.06 | 19.9 / 19.4 / 19.6 |
+| VI | 1.02 / 1.02 / 1.02 | 21.7 / 21.6 / 21.3 |
+| **BE** | 2.53 / 5.80 / **5.44** | 1086 / 832 / 957 |
+| BK | 0.16 / 0.16 / 0.16 | 75 / 60 / **152** |
+
+（BE 丟包率：94.7% / 87.9% / **88.6%**）
+
+- **QAD-EDCA 把 BE 吞吐量提升約 2.15×（2.53→5.44）、延遲降 ~12%**。
+- **VO/VI 完全不受損**（吞吐/延遲/丟包三方案幾乎一致）；**BK 吞吐保住、延遲略升**（QAD 75→152ms，背景流量無 QoS 上限，可接受）。
 - QAD-EDCA ≈ Tuned Static（**略低 ~6%**，雖已加入「降 BE/BK CWmin」追趕）：原因是**結構性的**，見 §6——
   回饋控制在穩態飽和的天花板就是靜態最佳值，無法超越手調。
 
 ### 投影片 4-3：規模效應（N = 5/10/15/20）
 圖：`n_scaling.png`
-- 三路差距隨 N（負載）放大；QAD-EDCA 與 Tuned Static 在各 N 都把 BE/BK 拉離飢餓區，曲線貼近。
+
+AC_BE 吞吐量 (Mbps)，固定 20% 高優先權：
+
+| N | Standard | Tuned | **QAD** |
+|---|---|---|---|
+| 5 | 3.74 | 5.96 | **5.63** |
+| 10 | 2.53 | 5.80 | **5.44** |
+| 15 | 1.84 | 5.11 | **4.83** |
+| 20 | 1.57 | 4.86 | **4.71** |
+
+- **Standard 隨 N 崩潰（3.74→1.57），QAD 撐住（5.63→4.71）**——QAD 對 Standard 的倍率由 1.5× 放大到 **3.0×**。
+- QAD 與 Tuned 在各 N 都把 BE 拉離飢餓區、曲線貼近（QAD 略低 ~6%）。
 
 ### 投影片 4-4：公平性的正確讀法
 圖：`fairness_index.png`
@@ -180,17 +225,17 @@ $$\text{Starvation}(AC_i) \iff \Big(\tfrac{Q_i}{Q_{cap}} > Q_{th}\Big) \lor \big
 ### 投影片 6-2：回饋控制在穩態飽和的天花板＝靜態最佳值（核心誠實洞見）
 - 為追平靜態調參，我們再加「降 BE/BK CWmin（至 7）」與遲滯，但 BE 只從 5.34→5.44，**仍低於 Tuned 5.80**。
 - **這是結構性、非調不夠**：QAD 一降 BE CWmin 就把 AP 佇列排空 → 偵測器看不到飢餓 → 停止緩解 → boost 衰退（觸發率因此從 64% 降到 ~15%）。**「解除飢餓」本身會移除偵測器的觸發**。
-- **兩個獨立的靜態/計算式方法都驗證了這個天花板**（不是 Tuned 個案）：
+- **手調靜態最佳值在每個 mix 都略勝 QAD，且差距跨 mix／規模穩定**（證明是結構性、非調不夠）：
 
-  | BE 吞吐量 (Mbps) | Standard | QAD | Tuned（手調靜態）| **QCAAAE [2019]（依站台數計算的靜態）** |
-  |---|---|---|---|---|
-  | 1VO/1VI/4BE/4BK | 2.53 | 5.44 | 5.80 | **5.82** |
-  | 2VO/2VI/3BE/3BK | 2.59 | 4.82 | 5.20 | **5.21** |
-  | 3VO/3VI/2BE/2BK | 2.78 | 4.22 | 4.54 | **4.54** |
+  | BE 吞吐量 (Mbps) | Standard | QAD | Tuned（手調靜態）|
+  |---|---|---|---|
+  | 1VO/1VI/4BE/4BK | 2.53 | 5.44 | **5.80** |
+  | 2VO/2VI/3BE/3BK | 2.59 | 4.82 | **5.20** |
+  | 3VO/3VI/2BE/2BK | 2.78 | 4.22 | **4.54** |
 
-  → Tuned ≈ QCAAAE，**兩者在每個 mix 都略勝 QAD ~0.3–0.4 Mbps**。
+  → Tuned **在每個 mix 都略勝 QAD ~0.3–0.4 Mbps**，且差距穩定。
 - 含意：**回饋控制要在穩態飽和贏過好的前饋（靜態最佳值），就得無條件持續維持最大 boost——那它就變成靜態方法了**，放棄自適應。
-- 所以 QAD 的定位本來就**不是穩態壓過靜態最佳**，而是**免人工調參、且負載變動時自動跟上 / 空閒時自動回退**（§7）。**用兩個獨立方法實證這個天花板，是嚴謹的加分**。
+- 所以 QAD 的定位本來就**不是穩態壓過靜態最佳**，而是**免人工調參、且負載變動時自動跟上 / 空閒時自動回退**（§7）。
 
 ---
 
@@ -214,9 +259,11 @@ $$\text{Starvation}(AC_i) \iff \Big(\tfrac{Q_i}{Q_{cap}} > Q_{th}\Big) \lor \big
 - 三路在 surge 都被高優先權擠壓而下降，surge 結束後回升。
 - **QAD-EDCA 全程貼近 Tuned Static（~2.15× Standard），但無需事先人工設定**——負載一變，QAD 自動跟上；Tuned 的固定值只對「它被調的那個工作點」最佳。
 
-### 投影片 7-3：高優先權 QoS 未被犧牲
-- 三路的 VO/VI 平均延遲在所有階段都 **遠低於 150 ms QoS 上限**（最差 Standard surge ~33 ms）。
-- 即 QAD 對 VO/VI 的抑制是「夠用就好」，QoS 安全閥確保不過度。
+### 投影片 7-3：高優先權 QoS——Standard 在 surge 會破功，QAD 救得回來
+- **看階段平均會被騙**：VO/VI 平均延遲三路都 < 150 ms（最差 Standard surge ~33 ms）。但**看時間序列就現形**——`fig_dynamic_hi_delay.png` 顯示 **Standard 在 surge 期瞬間尖峰飆到 ~240 ms**（超過 150 ms VO 上限、真的破 QoS）。
+- **Tuned 與 QAD 全程把瞬時延遲壓在低點**：QAD 只在 surge 起點有一個 ~70 ms 短尖峰後立刻壓平。
+- **這正是 QAD 的價值**：免手調就把 Standard 的 240 ms 破功尖峰救回到接近 oracle（Tuned）的水準；QoS 安全閥確保抑制 BE/BK 時不犧牲 VO/VI。
+- 誠實補述：QAD 在此情境**不贏 Tuned**（BE 與瞬時延遲都略遜），與穩態天花板（§6-2）一致；贏的是「免先知負載、免手調」。
 
 ### 投影片 7-4：誠實的限制
 - 偵測器看的是 **AP 下行佇列**；在本「STA→AP→server」雙跳拓樸中，surge 時 BE 多半被擠在 **STA 上行**，較少封包抵達 AP，故 AP 端偵測在 surge 反而觸發變少（上圖下半部的凹陷）。
@@ -247,42 +294,29 @@ PDCF-DRL（Zuo 2025）發表結果（其設定）：
 - **解讀**：PDCF-DRL 能把四個 AC 的吞吐量幾乎拉平（徹底消除飢餓）、且大幅壓低碰撞率——
   效能是上界；**代價是 DRL 訓練**（收斂前效能可能比 Standard 還差、需算力）。
 
-#### 關鍵論點：贏的不是「DRL」，是「AC 感知」
-[6] 自己的對照組 **CCOD-DQN / SETL-DQN [2021–22]** 也是 DRL，但 **不對不同 AC 區分 CW**（[6] Table 6–7 明列「Differentiated Service / QoS Guarantee: Not provide」）：
-
-| Normalized throughput（多 AC，[6]） | 20 站 | 120 站 |
-|---|---|---|
-| EDCA | 43.6% | 32.1% |
-| CCOD-DQN / SETL-DQN | 64.8% / 64.0% | **31.7% / 32.1%（崩回 ≈EDCA）** |
-| PDCF-DRL（有 AC 區分） | 83.5% | 81.4% |
-
-→ **不做 AC 區分的 DRL 在高競爭下崩回 EDCA 水準**。QAD 用 **O(1) 規則就提供它們所缺的 AC 感知差異化**。
-> 訊息：**重點是 AC 感知的自適應，不是 DRL 本身**。只有「DRL + AC 區分」的 PDCF-DRL 真正勝出，代價是訓練。
-
 - **QAD-EDCA 的定位**：以 O(1)、免訓練的規則，從第一個監控週期就提供飢餓緩解（BE ~2.15×），
   落在「免訓練 / 可即時部署」象限——正是 static EDCA 與 DRL 之間的中間地帶。
 
 ### 投影片 8-2：方案比較總表（含同條件模擬與文獻參考）
 
-| 指標 | Standard | CCOD/SETL-DQN | **QAD-EDCA** | 靜態 oracle（Tuned≈QCAAAE）| PDCF-DRL [6] |
-|------|----------|--------------|--------------|---------------|---------------|
-| 性質 | 靜態基準 | DRL，無 AC 區分 | **動態、AC 感知、輕量** | 靜態，需先知負載 | DRL，AC 區分 |
-| 飢餓緩解（BE） | 無（94.7% loss）| 高 N 崩回 ≈EDCA | **5.44 Mbps（~2.15×）** | 5.80 Mbps | 近均等（無飢餓）|
-| 需事先人工調參 / 訓練 | — | 訓練 | **否 / 否** | **需先知負載** | 訓練 |
-| 隨負載自適應 | 否 | 是 | **是** | 否 | 是 |
-| 運算 | O(1) | O(DRL) | **O(1)** | O(1) | O(DRL) |
-| vs QAD（本研究同條件）| **QAD 贏 2×** | QAD 提供其所缺的 AC 區分 | — | 略勝 QAD ~6%（§6-2 天花板）| 發表上界 |
+| 指標 | Standard | **QAD-EDCA** | 靜態 oracle（Tuned）| PDCF-DRL [6] |
+|------|----------|--------------|---------------|---------------|
+| 性質 | 靜態基準 | **動態、AC 感知、輕量** | 靜態，需先知負載 | DRL，AC 區分 |
+| 飢餓緩解（BE） | 無（94.7% loss）| **5.44 Mbps（~2.15×）** | 5.80 Mbps | 近均等（無飢餓）|
+| 需事先人工調參 / 訓練 | — | **否 / 否** | **需先知負載** | 訓練 |
+| 隨負載自適應 | 否 | **是** | 否 | 是 |
+| 運算 | O(1) | **O(1)** | O(1) | O(DRL) |
+| vs QAD（本研究同條件）| **QAD 贏 2×** | — | 略勝 QAD ~6%（§6-2 天花板）| 發表上界 |
 
-- **可隨插即用（不需先知負載 / 不需訓練）的方法裡，QAD 是最好的**：贏 Standard 2×、補上 CCOD/SETL 所缺的 AC 感知。
-- 略勝 QAD 的只有兩類「需先知條件」的上界：**靜態 oracle**（Tuned/QCAAAE 需先知負載）與 **DRL**（PDCF-DRL 需訓練）。
-- 註：Tuned/QCAAAE 為本研究同條件模擬；CCOD/SETL/PDCF-DRL 為 [6] 發表值（不同設定，趨勢參考）。
+- **可隨插即用（不需先知負載 / 不需訓練）的方法裡，QAD 是最好的**：贏 Standard 2×、從第一個監控週期就以 O(1) 規則提供飢餓緩解。
+- 略勝 QAD 的只有兩類「需先知條件」的上界：**靜態 oracle**（Tuned 需先知負載）與 **DRL**（PDCF-DRL 需訓練）。
+- 註：Tuned 為本研究同條件模擬；PDCF-DRL 為 [6] 發表值（不同設定，趨勢參考）。
 
 ### 投影片 8-3：關鍵發現（誠實版）
-1. QAD-EDCA 以輕量級規則把飢餓的 BE 吞吐量提升 ~2.15×、丟包從 94.7%→88.6%，VO/VI/BK 不受損——**在「不需先知負載、不需訓練」的可部署方法裡最佳**。
-2. **穩態下略低於需先知條件的兩類上界**：靜態 oracle（Tuned≈QCAAAE，~6%）與 DRL（PDCF-DRL）。我們用**兩個獨立靜態方法**證明這是回饋控制的**結構性天花板**（§6-2）——是嚴謹貢獻，不是缺陷。
-3. **AC 感知才是關鍵**：不做 AC 區分的 DRL（CCOD/SETL）高 N 崩回 ≈EDCA；QAD 用 O(1) 規則就提供它們所缺的差異化。
-4. 對自身 4 個演算法參數 robust（≤1.5%）。
-5. 我們驗證了控制迴圈確實閉合（修掉「假動態」的 bug），這是方法可信度的基礎。
+1. QAD-EDCA 以輕量級規則把飢餓的 BE 吞吐量提升 ~2.15×、丟包從 94.7%→88.6%；**VO/VI QoS 不受損**（BK 吞吐亦保住、延遲略升）——**在「不需先知負載、不需訓練」的可部署方法裡最佳**。
+2. **穩態下略低於需先知條件的兩類上界**：靜態 oracle（Tuned，~6%）與 DRL（PDCF-DRL）。我們證明這是回饋控制的**結構性天花板**（差距跨 mix／規模穩定，§6-2）——是嚴謹貢獻，不是缺陷。
+3. 對自身 4 個演算法參數 robust（≤1.5%）。
+4. 我們驗證了控制迴圈確實閉合（修掉「假動態」的 bug），這是方法可信度的基礎。
 
 ### 投影片 8-4：未來工作
 - 偵測改用上行/空中時間指標（解 §7-4 限制，也可能緩解 §6-2 的負反饋天花板）。
@@ -328,8 +362,6 @@ PDCF-DRL（Zuo 2025）發表結果（其設定）：
 [8] Q. Li et al., "ReinWiFi: Application-layer QoS optimization of WiFi networks with RL," arXiv:2405.03526, 2024.
 [9] R. Jain et al., "A quantitative measure of fairness," DEC TR-301, 1984.
 [10] IEEE Std 802.11ax-2021.
-[11] M. A. Salem, I. F. Tarrad, M. I. Youssef, S. M. Abd El-Kader, "QoS Categories Activeness-Aware Adaptive EDCA Algorithm for Dense IoT Networks (QCAAAE)," *Int. J. Computer Networks & Communications (IJCNC)*, vol. 11, no. 3, pp. 67–83, 2019. DOI:10.5121/ijcnc.2019.11305. **（本研究依其 Eq.(1)(2)+Table 2 同條件重現，作為靜態-計算式對照）**
-[12] CCOD-DQN 與 SETL-DQN — 不做 AC 區分的 DRL CW 方案，引自 [6]（[6] 內部編號 [10]/[12]）。
 
 - 標準對齊細節：`docs/standards-alignment-2026-05-28.md`（IEEE 802.11-2020 / 3GPP TS 23.501·26.114·TR 38.901 / ITU-T G.114·G.711 / IEEE 802.3-2005 / RFC 3551）。
-- 對照組數據來源：Tuned Static / QCAAAE [11] 為本研究 OMNeT++ 同條件模擬；CCOD-DQN / SETL-DQN / PDCF-DRL [6] 為其論文發表值（不同設定，趨勢參考）。
+- 對照組數據來源：Tuned Static 為本研究 OMNeT++ 同條件模擬；PDCF-DRL [6] 為其論文發表值（不同設定，趨勢參考）。

@@ -112,17 +112,26 @@ def plot_be_throughput(by, edges, centers, outdir):
         y = _ensemble(by[cfg], "EdcaFairnessNetwork.server.app[2]",
                       "throughput:vector", edges) / 1e6
         ax.plot(centers, y, color=color, ls=ls, lw=2, label=label)
+    ax.set_ylim(0, 8)          # headroom so the legend clears the ~6 Mbps lines
     _shade_phases(ax)
     ax.set(xlabel="Simulation Time (s)", ylabel="AC_BE Throughput (Mbps)",
            title="Best-Effort Throughput under a Transient High-Priority Surge",
            xlim=(0, SIM_T))
-    ax.legend(loc="upper right")
+    ax.legend(loc="upper right", framealpha=0.95)
     ax.grid(alpha=0.3)
     _save(fig, outdir, "fig_dynamic_be_throughput")
 
 
 def plot_hi_delay(by, edges, centers, outdir):
     fig, ax = plt.subplots(figsize=(9, 5))
+    # Delay spans ~3 ms (Tuned) to ~240 ms (Standard surge spikes), so a linear
+    # axis squashes the low Tuned line onto the x-axis. Use a log y-axis and
+    # emphasise Tuned (thicker + markers, drawn on top) so all three separate.
+    emph = {
+        "Dynamic_Baseline":    dict(lw=1.8, zorder=2),
+        "Dynamic_TunedStatic": dict(lw=2.8, zorder=5, marker="o", markevery=8, ms=4),
+        "Dynamic_QadEdca":     dict(lw=2.2, zorder=4),
+    }
     for cfg, (label, color, ls) in SCHEME.items():
         if cfg not in by:
             continue
@@ -132,14 +141,19 @@ def plot_hi_delay(by, edges, centers, outdir):
         vi = _ensemble(by[cfg], "EdcaFairnessNetwork.server.app[1]",
                        "endToEndDelay:vector", edges) * 1000
         hi = np.nanmean(np.vstack([vo, vi]), axis=0)
-        ax.plot(centers, hi, color=color, ls=ls, lw=2, label=label)
+        ax.plot(centers, hi, color=color, ls=ls, label=label, **emph.get(cfg, {}))
+    # 150 ms VO QoS bound (ITU-T G.114 / 3GPP 5QI=1).
+    ax.axhline(150, color="#777777", ls=(0, (6, 4)), lw=1.2, zorder=1)
+    ax.text(0.5, 165, "150 ms VO QoS bound", fontsize=9, color="#666666")
+    ax.set_yscale("log")
+    ax.set_ylim(1, 600)
     _shade_phases(ax)
     ax.set(xlabel="Simulation Time (s)",
-           ylabel="AC_VO/VI Mean Delay (ms)",
-           title="High-Priority Delay: the Cost of Static Over-Tuning",
+           ylabel="AC_VO/VI Mean Delay (ms, log scale)",
+           title="High-Priority (VO/VI) Delay: Standard Spikes above QoS under Surge",
            xlim=(0, SIM_T))
     ax.legend(loc="upper right")
-    ax.grid(alpha=0.3)
+    ax.grid(alpha=0.3, which="both")
     _save(fig, outdir, "fig_dynamic_hi_delay")
 
 

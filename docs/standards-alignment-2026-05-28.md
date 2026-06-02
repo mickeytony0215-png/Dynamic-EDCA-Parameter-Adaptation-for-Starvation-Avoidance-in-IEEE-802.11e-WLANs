@@ -95,7 +95,7 @@ sweep 值都收斂到相同的 BE throughput ≈ 5.5 Mbps**（見
    合理的初始值都會收斂到相同效果；論點為「定值即可，無需 per-deployment
    調校」。
 2. **後續工作**：sensitivity 需要 transient 或 dynamic load 情境才會浮現；
-   未來工作可用 `HighLoad_Progressive` 類的場景（站台動態加入）重新測試。
+   未來工作可用漸進式 / 站台動態加入的場景重新測試。
 
 ---
 
@@ -164,9 +164,8 @@ sweep 值都收斂到相同的 BE throughput ≈ 5.5 Mbps**（見
    Standard EDCA 當作唯一基準，否則會高估 QAD-EDCA 的相對效益。
 2. **QAD-EDCA 的優勢領域**：本實驗用 CBR 穩態流量，Tuned Static 已能拿到
    ~80% 的 BE 改善。**QAD-EDCA 的真正價值在於對「未知 / 變動 / 異質」負載
-   不需要事先人工調校**。對應的後續實驗應是 transient load（如
-   `HighLoad_Progressive` 的動態加入站台）或多種流量混合，這部分留作後續
-   工作。
+   不需要事先人工調校**。對應的後續實驗應是 transient load（站台動態加入）
+   或多種流量混合，這部分留作後續工作。
 3. **與 §6 Sensitivity 結論呼應**：靜態調參到合理區間 + 動態適應收斂到操作
    邊界，**穩態下兩者趨同**。QAD-EDCA 對演算法參數的 robustness 與
    Tuned Static 對 CWmin/AIFSN 選擇的 robustness 是同一個現象的不同視角。
@@ -253,31 +252,15 @@ sensitivity 在增強版下更平（≤1.5%）。
 
 ---
 
-## 12. 2026-06-01（晚）對照組擴充：QCAAAE 重現 + CCOD/SETL 文獻 + 最終定位
+## 12. 2026-06-01（晚）對照組擴充 → 2026-06-02 精簡：最終定位
 
-### 12.1 QCAAAE [Salem 2019] 同條件重現
-忠實重現 QCAAAE（IJCNC 2019, DOI 10.5121/ijcnc.2019.11305）的 Eq.(1)(2)+Table 2：
-`CWmin[AC]=2^ceil(log2(N_AC/2))-1`、`CWmax[AC]=min(2^ceil(log2(2*N_AC))-1,1023)`、
-AIFSN 依 activeness（VO/VI 皆 active → VO=2,VI=3,BE=4）。N_AC 在穩態固定，故為
-「計算式靜態」。場景檔 `simulations/scenarios/qcaaae.ini`（4 mix 預算值）。
+> 2026-06-02 更新：原 §12 的兩個「非 proposal」對照組已**移除**——
+> (a)「QCAAAE [Salem 2019] 同條件重現」（`qcaaae.ini` 已刪）；
+> (b)「CCOD-DQN / SETL-DQN [6] 文獻數據」與其衍生的「贏的不是 DRL、是 AC 感知」論點。
+> 兩者皆不在 proposal §4.6 比較方案中。穩態天花板論證改以**單一 Tuned 基準 + 差距跨 mix／規模穩定**
+> 支撐（見 §8.3、§11）；對照集精簡為 Standard / Tuned / QAD / PDCF-DRL（參考上界）。
 
-結果（BE 吞吐量 Mbps）：**QCAAAE ≈ Tuned，兩者每個 mix 都略勝 QAD ~0.3–0.4**：
-
-| mix | Standard | QAD | Tuned | QCAAAE |
-|---|---|---|---|---|
-| 1VO/1VI/4BE/4BK | 2.53 | 5.44 | 5.80 | 5.82 |
-| 2VO/2VI/3BE/3BK | 2.59 | 4.82 | 5.20 | 5.21 |
-| 3VO/3VI/2BE/2BK | 2.78 | 4.22 | 4.54 | 4.54 |
-| 4VO/4VI/1BE/1BK | 3.32 | 3.58 | 3.67 | 3.70 |
-
-→ **第二個獨立靜態方法確認 §6-2 的回饋控制天花板**（不是 Tuned 個案）。
-
-### 12.2 CCOD-DQN / SETL-DQN（[6] 發表數據）
-多-AC 下 throughput 20→120 站：EDCA 43.6→32.1%、CCOD/SETL 64.8→**31.7%（崩回 ≈EDCA）**、
-PDCF-DRL 83.5→81.4%。[6] Table 6–7：CCOD/SETL「不提供 AC 區分 / QoS 保證」。
-→ 論點「贏的不是 DRL，是 AC 感知」。
-
-### 12.3 最終誠實定位
-- **可隨插即用（不需先知負載/訓練）的方法裡 QAD 最佳**：贏 Standard 2×、補上 CCOD/SETL 缺的 AC 區分。
-- 略勝 QAD 的只有兩類「需先知條件」上界：靜態 oracle（Tuned≈QCAAAE，需先知負載）、DRL（PDCF-DRL，需訓練）。
-- 窮盡測試（Tuned/DTXOP/QCAAAE/高 N/自碰撞/文獻搜尋）後確認：此拓樸下 QAD 無法在效能數字上贏任何「猛推被餓 AC」的方法——這是回饋 vs 前饋的本質，已誠實寫入簡報。
+### 12.1 最終誠實定位
+- **可隨插即用（不需先知負載/訓練）的方法裡 QAD 最佳**：贏 Standard 2×、從第一個監控週期就以 O(1) 規則提供緩解。
+- 略勝 QAD 的只有兩類「需先知條件」上界：靜態 oracle（Tuned，需先知負載）、DRL（PDCF-DRL，需訓練）。
+- 窮盡測試（Tuned/DTXOP/高 N/自碰撞/文獻搜尋）後確認：此拓樸下 QAD 無法在效能數字上贏任何「猛推被餓 AC」的方法——這是回饋 vs 前饋的本質，已誠實寫入簡報。

@@ -5,7 +5,7 @@
 #   ./run.sh Baseline_N10 baseline             # GUI 模式（預設）
 #   ./run.sh QadEdca_N10 qad_edca              # GUI 模式
 #   ./run.sh Baseline_N10 baseline 0 --cli     # 命令列模式（批次用）
-#   ./run.sh HighLoad_Baseline high_load 3     # 指定 run #3
+#   ./run.sh Dynamic_QadEdca dynamic_load 3    # 指定 run #3
 
 CONFIG=${1:?"請指定 config 名稱，例如: Baseline_N10 或 QadEdca_N10"}
 SCENARIO=${2:?"請指定場景檔名（不含路徑和 .ini），例如: baseline 或 qad_edca"}
