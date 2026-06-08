@@ -115,9 +115,14 @@ GUI 介面中可以：
 
 | Config 名稱 | 站台數 | 說明 |
 |-------------|--------|------|
+| `QadEdca_N5` | 5 | 與 Baseline_N5 對照 |
 | `QadEdca_N10` | 10 | 與 Baseline_N10 對照 |
+| `QadEdca_N15` | 15 | 與 Baseline_N15 對照 |
 | `QadEdca_N20` | 20 | 與 Baseline_N20 對照 |
-| `QadEdca_ThresholdSweep` | 10 | 掃描不同 Q_th / P_th 閾值 |
+| `QadEdca_ThresholdSweep` | 10 | 掃描不同 Q_th / P_th 閾值（報告 §敏感度）|
+| `QadEdca_CwScaleSweep` | 10 | 掃描 cwScaleFactor（α_CW）|
+| `QadEdca_RecoveryFactorSweep` | 10 | 掃描 recoveryFactor（γ）|
+| `QadEdca_MonitorIntervalSweep` | 10 | 掃描 monitorInterval（T_mon）|
 
 ### Tuned Static 場景（場景檔：`tuned_static`）
 
@@ -132,6 +137,9 @@ GUI 介面中可以：
 | `Dynamic_Baseline` | Standard EDCA，calm→surge→calm 60s |
 | `Dynamic_TunedStatic` | Tuned Static，同上 |
 | `Dynamic_QadEdca` | QAD-EDCA，同上 |
+
+> `Dynamic_Base` 是被上面三個繼承的共用基底設定，不要單獨執行。
+> 動態場景的結果會輸出到 `simulations/results_dynamic/`（與穩態的 `results/` 分開）。
 
 ### 全飽和壓測場景（場景檔：`allheavy`）
 
@@ -162,9 +170,57 @@ make -j$(nproc)
 
 ## 模擬結果
 
-結果存在 `simulations/results/` 目錄下，格式為 SQLite（`.sca` / `.vec` 檔案）。
+結果存在以下目錄，格式為 SQLite（`.sca` / `.vec` 檔案）：
+- 穩態場景（Baseline / TunedStatic / QadEdca）→ `simulations/results/`
+- 動態場景（Dynamic_*）→ `simulations/results_dynamic/`
 
-可用 `scavetool` 或 Python（`omnetpp.scave`）讀取分析。
+可用 `scavetool` 或下方的分析腳本讀取。
+
+---
+
+## 完整重現報告的數字與圖表
+
+上面是跑「單一 config」。要重現報告中**平均過的表格**與 `analysis/figures/` 裡的**所有圖**，分兩階段。
+
+### 階段 A：批次跑完所有 runs
+
+專案內 `run_rerun_batch.sh` 用平行 pool 把 QAD 與動態場景的**每一個 run** 跑完：
+
+```bash
+cd "$HOME/wirleess communication network project"
+./run_rerun_batch.sh
+```
+
+- 重跑 `QadEdca_*`（N5/N10/N15/N20 + ThresholdSweep + CwScale/RecoveryFactor/MonitorInterval 三個 sweep）→ 覆寫 `simulations/results/`
+- 重跑 `Dynamic_Baseline / Dynamic_TunedStatic / Dynamic_QadEdca` → 輸出到 `simulations/results_dynamic/`
+- 平行度 `J=18`（可在腳本內改）；log 在 `results/rerun_<時間戳>.log`，全部跑完會產生 `results/rerun_<時間戳>.DONE`
+
+> **為何不含 `Baseline_*` / `TunedStatic_*`？** 它們不會實例化 QAD manager，程式碼修改不影響其結果，所以批次腳本刻意跳過。repo 內的 `simulations/results/` 已附這些結果，可直接用。
+> 若你是**全新環境、`results/` 是空的**，先把這兩組補跑（這裡示範 run 0；要完整平均需跑每個 config 的所有 run）：
+> ```bash
+> for c in Baseline_N5 Baseline_N10 Baseline_N15 Baseline_N20; do ./run.sh $c baseline 0 --cli; done
+> for c in TunedStatic_N5 TunedStatic_N10 TunedStatic_N15 TunedStatic_N20; do ./run.sh $c tuned_static 0 --cli; done
+> ```
+
+### 階段 B：用分析腳本產出 CSV 與圖（使用專案 venv）
+
+```bash
+cd "$HOME/wirleess communication network project/analysis"
+source ../venv/bin/activate          # 已內含 pandas / numpy / matplotlib
+
+# 1) 穩態：原始 .sca → 寬表 CSV → 圖（吞吐/延遲/丟包/規模/公平性/sweep）
+python transform.py ../simulations/results --out metrics_per_ac.csv
+python plot_figures.py metrics_per_ac.csv --outdir figures
+
+# 2) 動態：時間序列圖 + 相位摘要表
+python dynamic_timeseries.py ../simulations/results_dynamic --outdir figures
+
+# 3) 定位圖（純概念圖，不需資料）
+python positioning_figure.py
+```
+
+- 圖輸出到 `analysis/figures/`（同時產生 PDF + PNG），即 `report.tex` 引用的那些檔。
+- `parse_results.py <results_dir> -o summary.csv` 是另一個快速摘要工具，非主要產圖流程。
 
 ---
 

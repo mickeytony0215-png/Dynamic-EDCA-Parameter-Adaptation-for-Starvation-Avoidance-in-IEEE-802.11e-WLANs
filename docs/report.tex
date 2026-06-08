@@ -72,9 +72,7 @@ well-tuned static optimum that beats QAD-EDCA by $\sim$6\% consistently across
 load mixes, and we explain the
 mechanism: relieving starvation drains the queue that triggers the
 controller, so the boost decays (the trigger rate falls from 64\% to
-$\sim$15\%). We also document an instructive engineering pitfall---a static
-TXOP misconfiguration that produced ``fake dynamics''---and how vector-trace
-verification exposed it. QAD-EDCA is therefore positioned as the best option
+$\sim$15\%). QAD-EDCA is therefore positioned as the best option
 among methods that need neither prior knowledge of the load nor training,
 trailing only a foreknowledge-dependent static optimum and training-dependent
 deep reinforcement learning.
@@ -135,8 +133,6 @@ in saturated steady state. We confirm this against a carefully hand-tuned
 static optimum---the gap is stable across all load mixes---and give the
 mechanism: relieving starvation removes the queue signal that triggers the
 controller.
-We additionally document a methodological pitfall---a static-TXOP
-``fake dynamics'' confound---and how vector tracing caught it.
 \item \emph{A clear positioning.} Among methods requiring neither foreknowledge
 of the load nor training, QAD-EDCA is the strongest: $2.15\times$ \AC{BE} gain
 over standard EDCA with no QoS loss, trailing only a foreknowledge-dependent
@@ -212,8 +208,7 @@ AC & Application & Size & Interval & Rate\\
 \textbf{Standard EDCA parameters.} For the OFDM PHY ($a\text{CWmin}=15$,
 $a\text{CWmax}=1023$) the default per-AC parameters used as our baseline are
 shown in Table~\ref{tab:edca}. We use the INET/IEEE single-MSDU TXOP defaults
-($\text{TXOP}=0$ for \AC{BE}/\AC{BK}); the relevance of this choice is
-revisited in Sec.~\ref{sec:analysis} (the ``fake dynamics'' lesson).
+($\text{TXOP}=0$ for \AC{BE}/\AC{BK}).
 
 \begin{table}[t]
 \centering
@@ -447,20 +442,6 @@ configuration \emph{for this load}.
 upper-bound reference, not a head-to-head.
 \end{enumerate}
 
-\textbf{Engineering-methodology note.} An early implementation appeared to
-``win'' but actually never triggered its own detector. Vector tracing of the
-controller state (\texttt{starvationDetected}) revealed it was identically
-false: the gain came from a static TXOP misconfiguration
-(\AC{BE}/\AC{BK} TXOP set to 2.528~ms instead of the standard 0), which let
-\AC{BE}/\AC{BK} burst \emph{and} drained the AP queue so the detector could
-never fire. A control experiment (Standard EDCA $+$ the same static TXOP)
-reproduced the ``win'' (\AC{BE} 7.22~Mbps $\approx$ the buggy 7.18~Mbps),
-proving the effect was static, not adaptive. We corrected the TXOP defaults to
-standard (Table~\ref{tab:edca}); afterwards the detector genuinely fires
-($\sim$64\% of cycles at the headline load) and the honest \AC{BE} figure is
-5.44~Mbps. The lesson---\emph{``dynamic'' must be verified by confirming the
-loop closes, not by an improved output number}---shapes the analysis below.
-
 % =====================================================================
 \section{Analysis and Discussion}\label{sec:analysis}
 % =====================================================================
@@ -691,9 +672,8 @@ $2.15\times$ over standard EDCA with no QoS loss and zero tuning or training.
 We also reported, honestly, what it cannot do: in saturated steady state a
 queue-feedback controller cannot surpass a well-chosen feedforward static
 optimum, because relieving starvation removes its own trigger---a result we
-confirmed against a well-tuned static optimum and a mechanistic explanation,
-and which we reached only after correcting a ``fake dynamics'' confound exposed
-by vector tracing. QAD-EDCA is therefore best understood as the strongest
+confirmed against a well-tuned static optimum and a mechanistic explanation.
+QAD-EDCA is therefore best understood as the strongest
 \emph{plug-and-play} option---no foreknowledge, no training---trailing only
 foreknowledge- and training-dependent upper bounds. Future work: an
 uplink/airtime indicator (to extend reach
