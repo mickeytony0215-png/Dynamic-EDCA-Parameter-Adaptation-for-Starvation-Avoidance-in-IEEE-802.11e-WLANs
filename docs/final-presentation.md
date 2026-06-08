@@ -50,20 +50,20 @@ Each slide has two parts:
 ### Slide 1-2: Motivation — why starvation happens `[CORE]`
 **On slide:**
 - One Wi-Fi link carries voice / video / web / background at the same time
-- EDCA prioritizes with **static** parameters: VO > VI > BE > BK
-- Under load, Best-Effort / Background **starve**
-- Still a problem in Wi-Fi 6/7 (MU-EDCA, MLO)
-- EDCA has no feedback mechanism to detect or fix it
+- EDCA prioritizes with **static** parameters: VO > VI > BE > BK [1]
+- Under heavy load, **VO/VI monopolize the channel** → BE/BK get near-zero throughput + excessive loss = **starvation** [2][3]
+- Still a problem in Wi-Fi 6/7 (MU-EDCA, MLO) [10]
+- **IEEE 802.11 has NO built-in feedback** to detect or fix starvation
 
 **Say (~35s):**
-> Modern Wi-Fi runs voice, video, web, and background traffic on the same channel. EDCA separates them into four priority classes, but the parameters are static — once you associate, they're fixed. When the load gets high, the high-priority classes keep winning the channel, and the low-priority ones, BE and BK, basically starve: throughput close to zero, high loss. This is still around in Wi-Fi 6 and 7. The reason is that EDCA has no feedback — nothing detects starvation and nothing corrects it. That's the gap we're filling.
+> Modern Wi-Fi runs voice, video, web, and background traffic on the same channel. EDCA separates them into four priority classes, but the parameters are static — once you associate, they're fixed. When the load gets high, the high-priority classes monopolize the channel, and the low-priority ones, BE and BK, basically starve: throughput close to zero, high loss — a well-documented effect (Ugwu et al. [2], Mammeri et al. [3]). This is still around in Wi-Fi 6 and 7. The key gap: IEEE 802.11 has no feedback — nothing detects starvation and nothing corrects it. That's what we're filling.
 
 ---
 
 ### Slide 1-3: Goal & contributions `[CORE]`
 **On slide:**
 - **QAD-EDCA**: AP monitors queues → detects starvation → adjusts EDCA → exponentially recovers once it clears
-- Goals: relieve starvation / no manual tuning / don't hurt VO/VI QoS / O(1) cost
+- Goals: relieve starvation / no manual tuning / preserve VO/VI QoS / O(1) cost
 - Contributions:
   1. A formal starvation predicate (queue **OR** loss)
   2. A complete O(1) closed-loop controller
@@ -90,9 +90,11 @@ Each slide has two parts:
 | BK | 15 | 7 | 0 |
 
 - Measured (N=10, 1VO/1VI/4BE/4BK): Standard EDCA → **BE loss ≈ 94.7%, delay ≈ 1086 ms**
+- Ugwu et al. [2]: **AIFSN has greatest influence** on this disparity
+- Mammeri et al. [3] proposed SDMA: relies on **channel bonding** — N/A to single-channel BSS
 
 **Say (~45s):**
-> Quick background. These are the standard EDCA defaults. The smaller the CWmin and AIFSN, the easier it is to win the channel, so VO and VI win. Below that is our own simulation: with N=10 and four saturated BE stations, standard EDCA gives BE about 94.7% loss and over a second of delay, so it's basically starved. The literature also points out that AIFSN is the parameter with the largest effect.
+> Quick background. These are the standard EDCA defaults [1]. The smaller the CWmin and AIFSN, the easier it is to win the channel, so VO and VI win. Below that is our own simulation: with N=10 and four saturated BE stations, standard EDCA gives BE about 94.7% loss and over a second of delay, so it's basically starved. The literature agrees: Ugwu et al. [2] show AIFSN has the biggest effect on the disparity, and Mammeri et al. [3] propose SDMA, but it needs channel bonding, so it doesn't apply to our single-channel BSS.
 
 ---
 
@@ -350,17 +352,17 @@ N=10, 1 VO/1 VI/4 BE/4 BK (only BE saturated):
 **Q2 — How do you know QAD actually adapts under load?**
 > We logged `starvationDetected` and the adjusted AIFSN/CWmin with vectors; under load it fires and the parameters change over time (`fig_dynamic_qad_adapt`). The dynamic scenario in Part 4 also shows it tracking the load as it shifts from calm to surge and back.
 
-**Q3 — Why not just use DRL like PDCF-DRL?**
+**Q3 — Why not just use DRL like PDCF-DRL [6]?**
 > DRL has a higher performance ceiling, but it needs thousands of training episodes and compute, and can be worse than standard before it converges, which a resource-limited AP may not afford. QAD is O(1), needs no training, and works from the first cycle; it could even bridge the gap while a DRL agent trains. Its setup differs from ours, so we treat it as a reference bound, not a head-to-head.
 
 **Q4 — Isn't a 100 ms monitoring interval too slow?**
 > It's aligned with the beacon, so there's no extra overhead. The sweep shows 50–500 ms changes steady-state BE by under 1%. Going faster just costs more compute and is more prone to oscillation.
 
-**Q5 — Why does the cross-AC Jain index drop when you help BE?**
-> Because raising BE, which is already the second-highest, makes the four ACs less even. Jain isn't the right metric for starvation relief here; the right thing is whether BE/BK escape starvation, i.e. throughput recovers and loss drops (`fairness_index`).
+**Q5 — Why does the cross-AC Jain index [9] drop when you help BE?**
+> Because raising BE, which is already the second-highest, makes the four ACs less even. Jain's index [9] isn't the right metric for starvation relief here; the right thing is whether BE/BK escape starvation, i.e. throughput recovers and loss drops (`fairness_index`).
 
 **Q6 — How far is this from a real deployment?**
-> We assume an ideal channel, instantaneous beacon propagation, and a wireless two-hop path to the server (which also causes the detector limitation in Part 4 — the AP only sees the downlink queue). A real environment has fading and interference; future work could combine with 802.11ax TWT and use airtime for detection.
+> We assume an ideal channel, instantaneous beacon propagation, and a wireless two-hop path to the server (which also causes the detector limitation in Part 4 — the AP only sees the downlink queue). A real environment has fading and interference; future work could combine with 802.11ax [10] TWT and use airtime for detection.
 
 ---
 
