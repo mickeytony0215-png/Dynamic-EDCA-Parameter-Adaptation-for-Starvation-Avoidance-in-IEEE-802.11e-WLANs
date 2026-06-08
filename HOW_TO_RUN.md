@@ -196,11 +196,13 @@ cd "$HOME/wirleess communication network project"
 - 平行度 `J=18`（可在腳本內改）；log 在 `results/rerun_<時間戳>.log`，全部跑完會產生 `results/rerun_<時間戳>.DONE`
 
 > **為何不含 `Baseline_*` / `TunedStatic_*`？** 它們不會實例化 QAD manager，程式碼修改不影響其結果，所以批次腳本刻意跳過。repo 內的 `simulations/results/` 已附這些結果，可直接用。
-> 若你是**全新環境、`results/` 是空的**，先把這兩組補跑（這裡示範 run 0；要完整平均需跑每個 config 的所有 run）：
+> **要一次跑完「全部」實驗**（含 Baseline / TunedStatic，每個 config 的所有 run）→ 用完整版腳本
+> `run_all_batch.sh`（共 445 runs，同樣 J=18 平行）：
 > ```bash
-> for c in Baseline_N5 Baseline_N10 Baseline_N15 Baseline_N20; do ./run.sh $c baseline 0 --cli; done
-> for c in TunedStatic_N5 TunedStatic_N10 TunedStatic_N15 TunedStatic_N20; do ./run.sh $c tuned_static 0 --cli; done
+> ./run_all_batch.sh                  # 全部 445 runs
+> # 旋鈕：DRY_RUN=1 只列計畫不執行｜INCLUDE_ALLHEAVY=0 跳過壓測｜J=8 降平行度
 > ```
+> 輸出：穩態→`results/`、動態→`results_dynamic/`、壓測→`results_allheavy/`；跑完產生 `results/runall_<時間戳>.DONE`，並印出接續產圖的指令。
 
 ### 階段 B：用分析腳本產出 CSV 與圖（使用專案 venv）
 
